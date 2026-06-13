@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   Calendar, Activity, FileText, Bell, Heart, Clock,
-  ChevronRight, TrendingUp, AlertCircle, CheckCircle, Brain
+  ChevronRight, TrendingUp, AlertCircle, CheckCircle, Brain, Stethoscope
 } from 'lucide-react';
 import api from '../lib/api';
 import useAuthStore from '../store/authStore';
@@ -88,7 +88,12 @@ export default function Dashboard() {
     .sort((a, b) => new Date(a.appointment_date) - new Date(b.appointment_date))
     .slice(0, 5);
 
-  const past = appointments.filter(a => a.status === 'completed').length;
+  const history = appointments
+    .filter(a => a.status === 'completed')
+    .sort((a, b) => new Date(b.appointment_date) - new Date(a.appointment_date))
+    .slice(0, 6);
+
+  const past = history.length;
   const unread = notifications.filter(n => !n.is_read).length;
 
   const score = healthScore ?? 75;
@@ -279,6 +284,55 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Medical History */}
+      <div className="glass-card p-6">
+        <div className="mb-5 flex items-center justify-between">
+          <h3 className="section-title flex items-center gap-2">
+            <Stethoscope className="text-brand-500" size={18} />
+            Medical History
+          </h3>
+          <span className="text-xs text-zinc-500">{past} completed visit{past !== 1 ? 's' : ''}</span>
+        </div>
+        {loading ? (
+          <div className="space-y-3">
+            {[1, 2, 3].map(i => <div key={i} className="shimmer-bar h-12 rounded-xl" />)}
+          </div>
+        ) : history.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 py-10 text-center">
+            <Stethoscope className="h-10 w-10 text-zinc-700" />
+            <p className="text-sm text-zinc-500">No completed appointments yet</p>
+          </div>
+        ) : (
+          <div className="relative">
+            <div className="absolute left-4 top-0 h-full w-px bg-white/[0.06]" />
+            <div className="space-y-3">
+              {history.map((a, idx) => (
+                <div key={a.id} className="relative flex items-start gap-4 pl-10">
+                  <div className="absolute left-[11px] top-3 h-2.5 w-2.5 rounded-full border-2 border-brand-500 bg-black" />
+                  <div className="flex-1 rounded-xl border border-white/[0.07] bg-white/[0.02] px-4 py-3 hover:border-white/15 transition">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-zinc-200">
+                        {a.doctor_name || `Doctor #${a.doctor_id}`}
+                      </p>
+                      <span className="text-xs text-zinc-500">
+                        {a.appointment_date?.split('T')[0]}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-zinc-500">
+                      {a.specialization || 'General Medicine'}
+                      {a.department_name ? ` · ${a.department_name}` : ''}
+                    </p>
+                    {a.reason && (
+                      <p className="mt-1 text-xs italic text-zinc-600 line-clamp-1">"{a.reason}"</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

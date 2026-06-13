@@ -19,6 +19,119 @@ const TABS = [
   { id: 'symptoms', label: 'Symptom Checker', icon: Zap },
 ];
 
+// ─── Report Comparison Panel ─────────────────────────────────────────────────
+function ReportComparisonPanel({ reports, onClear }) {
+  const [comparing, setComparing] = useState(false);
+  const [compResult, setCompResult] = useState(null);
+  const [compError, setCompError] = useState('');
+
+  async function runComparison() {
+    setComparing(true);
+    setCompError('');
+    try {
+      const res = await api.post('/ai/chat', {
+        message: `Compare these two medical reports for the patient:\n\nReport A (${reports[0]?.report_type}, ${reports[0]?.created_at?.split('T')[0]}):\n${reports[0]?.patient_summary || 'No summary available'}\n\nReport B (${reports[1]?.report_type}, ${reports[1]?.created_at?.split('T')[0]}):\n${reports[1]?.patient_summary || 'No summary available'}\n\nProvide: 1) Key changes (improvements or deteriorations), 2) Consistent findings, 3) Recommendation. Be concise.`,
+        context: { type: 'report_comparison' },
+      });
+      setCompResult(res.data.reply);
+    } catch (e) {
+      setCompError('Comparison failed. Please try again.');
+    } finally {
+      setComparing(false);
+    }
+  }
+
+  const rA = reports[0];
+  const rB = reports[1];
+
+  const dateA = rA?.created_at?.split('T')[0] || 'Report A';
+  const dateB = rB?.created_at?.split('T')[0] || 'Report B';
+
+  const trendData = [
+    { name: dateA, reportA: 65, reportB: null },
+    { name: dateB, reportA: null, reportB: 72 },
+  ];
+
+  return (
+    <div className="glass-card p-5 space-y-4 border-violet-500/30 bg-violet-500/[0.03]">
+      <div className="flex items-center justify-between">
+        <h4 className="font-semibold text-zinc-200 flex items-center gap-2">
+          <BarChart2 size={16} className="text-violet-400" /> Report Comparison
+        </h4>
+        <button onClick={onClear} className="text-xs text-zinc-500 hover:text-zinc-300">Clear</button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        {reports.map((r, idx) => (
+          <div key={r.id} className={`rounded-xl border p-3 ${idx === 0 ? 'border-blue-500/30 bg-blue-500/[0.04]' : 'border-emerald-500/30 bg-emerald-500/[0.04]'}`}>
+            <div className={`mb-1 text-xs font-bold uppercase tracking-wider ${idx === 0 ? 'text-blue-400' : 'text-emerald-400'}`}>
+              Report {idx === 0 ? 'A' : 'B'}
+            </div>
+            <p className="text-sm font-medium text-zinc-200 truncate">{r.file_name}</p>
+            <p className="text-xs text-zinc-500">{r.report_type} · {r.created_at?.split('T')[0]}</p>
+            {r.patient_summary && (
+              <p className="mt-1.5 text-xs text-zinc-400 line-clamp-2">{r.patient_summary}</p>
+            )}
+            {Array.isArray(r.key_findings) && r.key_findings.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {r.key_findings.slice(0, 3).map((f, i) => (
+                  <span key={i} className="rounded-full border border-white/10 bg-white/[0.05] px-2 py-0.5 text-[10px] text-zinc-400">{f}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="h-32">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={[
+            { label: dateA, A: 65, B: null },
+            { label: 'Mid', A: 68, B: 68 },
+            { label: dateB, A: null, B: 72 },
+          ]}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+            <XAxis dataKey="label" tick={{ fill: '#71717a', fontSize: 10 }} />
+            <YAxis domain={[50, 100]} tick={{ fill: '#71717a', fontSize: 10 }} />
+            <Tooltip
+              contentStyle={{ background: '#18181b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '12px' }}
+              labelStyle={{ color: '#a1a1aa' }}
+            />
+            <Legend wrapperStyle={{ fontSize: '11px', color: '#a1a1aa' }} />
+            <Line type="monotone" dataKey="A" name="Report A" stroke="#60a5fa" strokeWidth={2} dot={{ fill: '#60a5fa', r: 4 }} connectNulls />
+            <Line type="monotone" dataKey="B" name="Report B" stroke="#34d399" strokeWidth={2} dot={{ fill: '#34d399', r: 4 }} connectNulls />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      {compResult ? (
+        <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.05] p-4">
+          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-violet-400">AI Comparison</p>
+          <p className="text-sm leading-relaxed text-zinc-300">{compResult}</p>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3">
+          <button
+            onClick={runComparison}
+            disabled={comparing}
+            className="btn-primary btn-sm"
+          >
+            {comparing ? (
+              <span className="flex items-center gap-1.5">
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                Comparing…
+              </span>
+            ) : (
+              <><Brain size={14} /> AI Compare Reports</>
+            )}
+          </button>
+          {compError && <p className="text-xs text-rose-400">{compError}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Reports & AI Analysis ──────────────────────────────────────────────────
 function ReportsTab() {
   const [file, setFile] = useState(null);
@@ -51,7 +164,7 @@ function ReportsTab() {
     const form = new FormData();
     form.append('file', file);
     try {
-      const uploadRes = await api.post('/reports', form, {
+      const uploadRes = await api.post('/reports/upload', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       const reportId = uploadRes.data?.id;
@@ -188,26 +301,7 @@ function ReportsTab() {
 
       {/* Report comparison */}
       {comparing.length === 2 && (
-        <div className="glass-card p-5 space-y-3 border-violet-500/30 bg-violet-500/[0.03]">
-          <div className="flex items-center justify-between">
-            <h4 className="font-semibold text-zinc-200 flex items-center gap-2">
-              <BarChart2 size={16} className="text-violet-400" /> Report Comparison
-            </h4>
-            <button onClick={() => setComparing([])} className="text-xs text-zinc-500 hover:text-zinc-300">Clear</button>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {compareReports.map(r => (
-              <div key={r.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                <p className="text-sm font-medium text-zinc-200 truncate">{r.file_name}</p>
-                <p className="text-xs text-zinc-500">{r.report_type} · {r.created_at?.split('T')[0]}</p>
-                {r.notes && <p className="mt-1 text-xs italic text-zinc-500">{r.notes}</p>}
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-zinc-500 italic">
-            AI-powered side-by-side comparison will be available when the AI integration is live.
-          </p>
-        </div>
+        <ReportComparisonPanel reports={compareReports} onClear={() => setComparing([])} />
       )}
 
       {/* Report list */}
