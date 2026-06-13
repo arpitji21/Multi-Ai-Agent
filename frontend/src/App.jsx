@@ -9,6 +9,8 @@ import Patients from './pages/Patients';
 import Appointments from './pages/Appointments';
 import PatientDashboard from './pages/PatientDashboard';
 import DoctorDashboard from './pages/DoctorDashboard';
+import DoctorPatientView from './pages/DoctorPatientView';
+import DoctorAITools from './pages/DoctorAITools';
 import AdminDashboard from './pages/AdminDashboard';
 
 const PATIENT_NAV = [
@@ -21,6 +23,7 @@ const DOCTOR_NAV = [
   { to: '/doctor', label: 'Dashboard', end: true },
   { to: '/doctor/patients', label: 'Patients' },
   { to: '/doctor/appointments', label: 'Schedule' },
+  { to: '/doctor/ai-tools', label: 'AI Tools' },
 ];
 
 const ADMIN_NAV = [
@@ -117,6 +120,16 @@ function App() {
         <Route path="/doctor/appointments" element={
           <ProtectedRoute allowedRoles={['doctor']}>
             <DoctorShell><Appointments /></DoctorShell>
+          </ProtectedRoute>
+        } />
+        <Route path="/doctor/patient/:patientId" element={
+          <ProtectedRoute allowedRoles={['doctor']}>
+            <DoctorShell><DoctorPatientView /></DoctorShell>
+          </ProtectedRoute>
+        } />
+        <Route path="/doctor/ai-tools" element={
+          <ProtectedRoute allowedRoles={['doctor']}>
+            <DoctorShell><DoctorAITools /></DoctorShell>
           </ProtectedRoute>
         } />
 
