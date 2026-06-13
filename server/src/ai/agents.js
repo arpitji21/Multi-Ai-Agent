@@ -246,7 +246,7 @@ async function orchestrate({ message, context, userRole, userId, history }) {
   return { reply: typeof reply === 'string' ? reply : JSON.stringify(reply, null, 2), agentType };
 }
 
-/* ── PDF text extraction ── */
+/* ── PDF and image text extraction ── */
 async function extractTextFromReport(report) {
   if (!report.file_path) return '';
 
@@ -265,20 +265,36 @@ async function extractTextFromReport(report) {
     } catch (e) { return ''; }
   }
 
-  // PDF files
+  // PDF files — pdf-parse@1.1.1 exports a callable function
   if (fileType.includes('pdf') || fileName.endsWith('.pdf')) {
     try {
       const pdfParse = require('pdf-parse');
       const buffer = fs.readFileSync(filePath);
       const data = await pdfParse(buffer);
-      return (data.text || '').slice(0, 4000);
+      return (data.text || '').trim().slice(0, 4000);
     } catch (e) {
       console.error('PDF parse error:', e.message);
       return '';
     }
   }
 
-  // Image files — can't extract text without OCR; return empty string (will use metadata-based analysis)
+  // Image files — OCR via tesseract.js
+  if (
+    fileType.includes('image') ||
+    fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ||
+    fileName.endsWith('.png') || fileName.endsWith('.tiff') ||
+    fileName.endsWith('.bmp') || fileName.endsWith('.gif')
+  ) {
+    try {
+      const { recognize } = require('tesseract.js');
+      const result = await recognize(filePath, 'eng', { logger: () => {} });
+      return (result.data.text || '').trim().slice(0, 4000);
+    } catch (e) {
+      console.error('OCR error:', e.message);
+      return '';
+    }
+  }
+
   return '';
 }
 
