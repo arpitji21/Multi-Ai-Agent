@@ -3,11 +3,10 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { query } = require('../db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Configure multer for local storage (reports)
 const uploadDir = path.join(__dirname, '../../uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
@@ -20,7 +19,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({
   storage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+  limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = ['.pdf', '.jpg', '.jpeg', '.png'];
     if (allowed.includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
@@ -28,7 +27,7 @@ const upload = multer({
   },
 });
 
-// GET /api/reports - get reports for current user
+// GET /api/reports — role-scoped list
 router.get('/', authenticate, async (req, res) => {
   try {
     let result;
@@ -66,7 +65,25 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// POST /api/reports/upload
+// GET /api/reports/stats/overview — admin only
+router.get('/stats/overview', authenticate, requireRole('admin'), async (req, res) => {
+  try {
+    const [total, today, pending] = await Promise.all([
+      query(`SELECT COUNT(*) FROM reports`),
+      query(`SELECT COUNT(*) FROM reports WHERE DATE(created_at)=CURRENT_DATE`),
+      query(`SELECT COUNT(*) FROM reports r LEFT JOIN ai_analyses aa ON aa.report_id=r.id WHERE aa.id IS NULL`),
+    ]);
+    res.json({
+      total: parseInt(total.rows[0].count),
+      today: parseInt(today.rows[0].count),
+      pending_analysis: parseInt(pending.rows[0].count),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch report stats' });
+  }
+});
+
+// POST /api/reports/upload — patient uploads own, doctor/admin can upload for any patient
 router.post('/upload', authenticate, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -78,6 +95,7 @@ router.post('/upload', authenticate, upload.single('file'), async (req, res) => 
       if (pat.rows.length === 0) return res.status(400).json({ error: 'Patient profile not found' });
       patient_id = pat.rows[0].id;
     }
+    if (!patient_id) return res.status(400).json({ error: 'patient_id required' });
 
     const result = await query(
       `INSERT INTO reports (patient_id, file_name, file_path, file_type, report_type, notes, file_size)
@@ -92,33 +110,23 @@ router.post('/upload', authenticate, upload.single('file'), async (req, res) => 
   }
 });
 
-// GET /api/reports/:id
-router.get('/:id', authenticate, async (req, res) => {
-  try {
-    const result = await query(
-      `SELECT r.*, aa.patient_summary, aa.doctor_summary, aa.key_findings, aa.abnormal_values, aa.is_critical
-       FROM reports r
-       LEFT JOIN ai_analyses aa ON aa.report_id = r.id
-       WHERE r.id=$1`,
-      [req.params.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch report' });
-  }
-});
-
-// GET /api/reports/patient/:patient_id/timeline
+// GET /api/reports/patient/:patient_id/timeline — own record or staff
 router.get('/patient/:patient_id/timeline', authenticate, async (req, res) => {
   try {
+    const requestedPatId = parseInt(req.params.patient_id);
+    if (req.user.role === 'patient') {
+      const pat = await query(`SELECT id FROM patients WHERE user_id=$1`, [req.user.id]);
+      if (!pat.rows.length || pat.rows[0].id !== requestedPatId) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
     const result = await query(
       `SELECT r.id, r.file_name, r.report_type, r.created_at,
               aa.patient_summary, aa.is_critical, aa.key_findings
        FROM reports r
        LEFT JOIN ai_analyses aa ON aa.report_id = r.id
        WHERE r.patient_id=$1 ORDER BY r.created_at DESC`,
-      [req.params.patient_id]
+      [requestedPatId]
     );
     res.json(result.rows);
   } catch (err) {
@@ -126,21 +134,27 @@ router.get('/patient/:patient_id/timeline', authenticate, async (req, res) => {
   }
 });
 
-// GET /api/reports/stats/overview — admin
-router.get('/stats/overview', authenticate, async (req, res) => {
+// GET /api/reports/:id — own report (patient), staff (doctor/admin)
+router.get('/:id', authenticate, async (req, res) => {
   try {
-    const [total, today, pending] = await Promise.all([
-      query(`SELECT COUNT(*) FROM reports`),
-      query(`SELECT COUNT(*) FROM reports WHERE DATE(created_at)=CURRENT_DATE`),
-      query(`SELECT COUNT(*) FROM reports r LEFT JOIN ai_analyses aa ON aa.report_id=r.id WHERE aa.id IS NULL`),
-    ]);
-    res.json({
-      total: parseInt(total.rows[0].count),
-      today: parseInt(today.rows[0].count),
-      pending_analysis: parseInt(pending.rows[0].count),
-    });
+    const result = await query(
+      `SELECT r.*, p.user_id as patient_user_id,
+              aa.patient_summary, aa.doctor_summary, aa.key_findings, aa.abnormal_values, aa.is_critical
+       FROM reports r
+       JOIN patients p ON r.patient_id = p.id
+       LEFT JOIN ai_analyses aa ON aa.report_id = r.id
+       WHERE r.id=$1`,
+      [req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
+
+    const report = result.rows[0];
+    if (req.user.role === 'patient' && report.patient_user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    res.json(report);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch report stats' });
+    res.status(500).json({ error: 'Failed to fetch report' });
   }
 });
 

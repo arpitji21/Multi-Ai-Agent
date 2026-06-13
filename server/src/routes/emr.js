@@ -4,12 +4,24 @@ const { authenticate, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-// GET /api/emr — doctor gets all EMRs for their patients
+// Helper: resolve patient_id for requesting patient user
+async function getOwnPatientId(userId) {
+  const r = await query(`SELECT id FROM patients WHERE user_id=$1`, [userId]);
+  return r.rows[0]?.id ?? null;
+}
+
+// Helper: resolve doctor_id for requesting doctor user
+async function getOwnDoctorId(userId) {
+  const r = await query(`SELECT id FROM doctors WHERE user_id=$1`, [userId]);
+  return r.rows[0]?.id ?? null;
+}
+
+// GET /api/emr — doctor sees their own EMRs; admin sees all
 router.get('/', authenticate, requireRole('doctor', 'admin'), async (req, res) => {
   try {
     let result;
     if (req.user.role === 'doctor') {
-      const doc = await query(`SELECT id FROM doctors WHERE user_id=$1`, [req.user.id]);
+      const docId = await getOwnDoctorId(req.user.id);
       result = await query(
         `SELECT e.*, u.name as patient_name, a.appointment_date
          FROM emr_records e
@@ -17,7 +29,7 @@ router.get('/', authenticate, requireRole('doctor', 'admin'), async (req, res) =
          JOIN users u ON p.user_id = u.id
          LEFT JOIN appointments a ON e.appointment_id = a.id
          WHERE e.doctor_id=$1 ORDER BY e.created_at DESC`,
-        [doc.rows[0]?.id]
+        [docId]
       );
     } else {
       result = await query(
@@ -36,20 +48,28 @@ router.get('/', authenticate, requireRole('doctor', 'admin'), async (req, res) =
   }
 });
 
-// POST /api/emr — create EMR
+// POST /api/emr — doctor creates EMR for their patient
 router.post('/', authenticate, requireRole('doctor'), async (req, res) => {
   try {
     const { patient_id, appointment_id, diagnosis, treatment_plan, prescription, follow_up_date, notes, vital_signs } = req.body;
-    const doc = await query(`SELECT id FROM doctors WHERE user_id=$1`, [req.user.id]);
-    if (doc.rows.length === 0) return res.status(400).json({ error: 'Doctor profile not found' });
+    const docId = await getOwnDoctorId(req.user.id);
+    if (!docId) return res.status(400).json({ error: 'Doctor profile not found' });
+
+    // If appointment provided, verify doctor owns it
+    if (appointment_id) {
+      const appt = await query(`SELECT doctor_id FROM appointments WHERE id=$1`, [appointment_id]);
+      if (appt.rows.length > 0 && appt.rows[0].doctor_id !== docId) {
+        return res.status(403).json({ error: 'Cannot create EMR for another doctor\'s appointment' });
+      }
+    }
 
     const result = await query(
       `INSERT INTO emr_records (patient_id, doctor_id, appointment_id, diagnosis, treatment_plan, prescription, follow_up_date, notes, vital_signs)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [patient_id, doc.rows[0].id, appointment_id || null, diagnosis, treatment_plan, prescription, follow_up_date || null, notes, vital_signs ? JSON.stringify(vital_signs) : null]
+      [patient_id, docId, appointment_id || null, diagnosis, treatment_plan, prescription,
+       follow_up_date || null, notes, vital_signs ? JSON.stringify(vital_signs) : null]
     );
 
-    // Update appointment status to completed if appointment_id provided
     if (appointment_id) {
       await query(`UPDATE appointments SET status='completed', updated_at=NOW() WHERE id=$1`, [appointment_id]);
     }
@@ -61,16 +81,35 @@ router.post('/', authenticate, requireRole('doctor'), async (req, res) => {
   }
 });
 
-// GET /api/emr/patient/:patient_id
+// GET /api/emr/patient/:patient_id — own record (patient), or staff (doctor/admin)
 router.get('/patient/:patient_id', authenticate, async (req, res) => {
   try {
+    const requestedPatId = parseInt(req.params.patient_id);
+
+    if (req.user.role === 'patient') {
+      const ownPatId = await getOwnPatientId(req.user.id);
+      if (ownPatId !== requestedPatId) return res.status(403).json({ error: 'Forbidden' });
+    } else if (req.user.role === 'doctor') {
+      // Doctor may only see EMRs they created for this patient
+      const docId = await getOwnDoctorId(req.user.id);
+      const result = await query(
+        `SELECT e.*, du.name as doctor_name, d.specialization
+         FROM emr_records e
+         JOIN doctors d ON e.doctor_id = d.id
+         JOIN users du ON d.user_id = du.id
+         WHERE e.patient_id=$1 AND e.doctor_id=$2 ORDER BY e.created_at DESC`,
+        [requestedPatId, docId]
+      );
+      return res.json(result.rows);
+    }
+    // Patient (own) or admin: see all EMRs for this patient
     const result = await query(
       `SELECT e.*, du.name as doctor_name, d.specialization
        FROM emr_records e
        JOIN doctors d ON e.doctor_id = d.id
        JOIN users du ON d.user_id = du.id
        WHERE e.patient_id=$1 ORDER BY e.created_at DESC`,
-      [req.params.patient_id]
+      [requestedPatId]
     );
     res.json(result.rows);
   } catch (err) {
@@ -78,11 +117,12 @@ router.get('/patient/:patient_id', authenticate, async (req, res) => {
   }
 });
 
-// GET /api/emr/:id
+// GET /api/emr/:id — own EMR record (patient), own EMR (doctor created it), or admin
 router.get('/:id', authenticate, async (req, res) => {
   try {
     const result = await query(
-      `SELECT e.*, du.name as doctor_name, d.specialization, pu.name as patient_name
+      `SELECT e.*, du.name as doctor_name, d.specialization, pu.name as patient_name,
+              p.user_id as patient_user_id
        FROM emr_records e
        JOIN doctors d ON e.doctor_id = d.id
        JOIN users du ON d.user_id = du.id
@@ -92,7 +132,17 @@ router.get('/:id', authenticate, async (req, res) => {
       [req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'EMR not found' });
-    res.json(result.rows[0]);
+
+    const emr = result.rows[0];
+    if (req.user.role === 'patient' && emr.patient_user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (req.user.role === 'doctor') {
+      const docId = await getOwnDoctorId(req.user.id);
+      if (emr.doctor_id !== docId) return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    res.json(emr);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch EMR' });
   }

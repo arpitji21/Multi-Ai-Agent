@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
   try {
     const result = await query(
       `SELECT a.id, a.user_id, u.name, u.email, u.phone, u.is_active,
-              a.access_level, a.created_at
+              a.permissions, a.created_at
        FROM admins a
        JOIN users u ON a.user_id = u.id
        ORDER BY a.created_at DESC`
@@ -30,7 +30,7 @@ router.get('/:id', async (req, res) => {
   try {
     const result = await query(
       `SELECT a.id, a.user_id, u.name, u.email, u.phone, u.is_active,
-              a.access_level, a.created_at
+              a.permissions, a.created_at
        FROM admins a
        JOIN users u ON a.user_id = u.id
        WHERE a.id = $1`,
@@ -46,7 +46,7 @@ router.get('/:id', async (req, res) => {
 // POST /api/admins — create a new admin user
 router.post('/', async (req, res) => {
   try {
-    const { name, email, password, phone, access_level } = req.body;
+    const { name, email, password, phone, permissions } = req.body;
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'name, email and password are required' });
     }
@@ -62,8 +62,8 @@ router.post('/', async (req, res) => {
     );
     const user = userResult.rows[0];
     const adminResult = await query(
-      `INSERT INTO admins (user_id, access_level) VALUES ($1, $2) RETURNING *`,
-      [user.id, access_level || 'standard']
+      `INSERT INTO admins (user_id, permissions) VALUES ($1, $2) RETURNING *`,
+      [user.id, permissions ? JSON.stringify(permissions) : '{}']
     );
     res.status(201).json({ ...adminResult.rows[0], name: user.name, email: user.email });
   } catch (err) {
@@ -75,7 +75,7 @@ router.post('/', async (req, res) => {
 // PUT /api/admins/:id — update admin
 router.put('/:id', async (req, res) => {
   try {
-    const { name, phone, access_level, is_active } = req.body;
+    const { name, phone, permissions, is_active } = req.body;
     const adminCheck = await query(`SELECT user_id FROM admins WHERE id=$1`, [req.params.id]);
     if (adminCheck.rows.length === 0) return res.status(404).json({ error: 'Admin not found' });
     const userId = adminCheck.rows[0].user_id;
@@ -87,11 +87,11 @@ router.put('/:id', async (req, res) => {
         [name || null, phone || null, is_active ?? null, userId]
       );
     }
-    if (access_level !== undefined) {
-      await query(`UPDATE admins SET access_level=$1 WHERE id=$2`, [access_level, req.params.id]);
+    if (permissions !== undefined) {
+      await query(`UPDATE admins SET permissions=$1 WHERE id=$2`, [JSON.stringify(permissions), req.params.id]);
     }
     const result = await query(
-      `SELECT a.id, a.user_id, u.name, u.email, u.phone, u.is_active, a.access_level
+      `SELECT a.id, a.user_id, u.name, u.email, u.phone, u.is_active, a.permissions
        FROM admins a JOIN users u ON a.user_id = u.id WHERE a.id=$1`,
       [req.params.id]
     );
@@ -106,9 +106,7 @@ router.delete('/:id', async (req, res) => {
   try {
     const adminCheck = await query(`SELECT user_id FROM admins WHERE id=$1`, [req.params.id]);
     if (adminCheck.rows.length === 0) return res.status(404).json({ error: 'Admin not found' });
-    // Prevent self-deletion
-    const adminUser = await query(`SELECT user_id FROM admins WHERE id=$1`, [req.params.id]);
-    if (adminUser.rows[0].user_id === req.user.id) {
+    if (adminCheck.rows[0].user_id === req.user.id) {
       return res.status(400).json({ error: 'Cannot deactivate your own account' });
     }
     await query(`UPDATE users SET is_active=false WHERE id=$1`, [adminCheck.rows[0].user_id]);
