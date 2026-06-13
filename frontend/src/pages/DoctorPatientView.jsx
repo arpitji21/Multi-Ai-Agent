@@ -330,7 +330,7 @@ Provide: key clinical points, medication review, areas to assess, and any alerts
                           <Pill className="h-4 w-4 text-blue-400" />
                         </div>
                         <div>
-                          <p className="font-medium text-zinc-200">{r.medicine_name}</p>
+                          <p className="font-medium text-zinc-200">{r.medication_name}</p>
                           <p className="text-xs text-zinc-500">{r.dosage}</p>
                         </div>
                       </div>
@@ -339,7 +339,7 @@ Provide: key clinical points, medication review, areas to assess, and any alerts
                           <Clock className="h-3 w-3" /> {r.frequency}
                         </p>
                       )}
-                      {r.notes && <p className="mt-1 text-xs text-zinc-600 italic">{r.notes}</p>}
+                      {r.instructions && <p className="mt-1 text-xs text-zinc-600 italic">{r.instructions}</p>}
                     </div>
                   ))}
                 </div>

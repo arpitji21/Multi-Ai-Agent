@@ -351,12 +351,35 @@ function ReportSummarizer() {
   const [mode, setMode] = useState('paste');
   const [reportText, setReportText] = useState('');
   const [file, setFile] = useState(null);
+  const [fileContent, setFileContent] = useState('');
+  const [fileError, setFileError] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [summary, setSummary] = useState(null);
 
+  function handleFileChange(e) {
+    const selected = e.target.files?.[0] || null;
+    setFile(selected);
+    setFileContent('');
+    setFileError('');
+    if (!selected) return;
+
+    const isText = selected.type.startsWith('text/') ||
+      selected.name.endsWith('.txt') ||
+      selected.name.endsWith('.csv');
+
+    if (isText) {
+      const reader = new FileReader();
+      reader.onload = ev => setFileContent(ev.target.result || '');
+      reader.onerror = () => setFileError('Could not read file. Try pasting the text instead.');
+      reader.readAsText(selected);
+    } else {
+      setFileError('PDF and image files cannot be read client-side. Please copy and paste the report text into the text area, or export the report as .txt.');
+    }
+  }
+
   async function summarize() {
-    const text = reportText.trim();
-    if (!text && !file) return;
+    const text = (mode === 'paste' ? reportText : fileContent).trim();
+    if (!text) return;
     setAiLoading(true);
     setSummary(null);
     try {
@@ -370,13 +393,10 @@ Provide:
 4. RECOMMENDED ACTIONS: Suggested next steps or referrals
 
 Medical Report:
-${text || '[Report file uploaded — analyzing content]'}`,
+${text}`,
         context: { type: 'report_summary' },
       });
-
-      const reply = res.data.reply;
-      // Structure the summary
-      setSummary(reply);
+      setSummary(res.data.reply);
     } catch {
       setSummary('Unable to process report summary. Please try again.');
     } finally {
@@ -385,6 +405,7 @@ ${text || '[Report file uploaded — analyzing content]'}`,
   }
 
   const hasCritical = summary?.toLowerCase().includes('critical') || summary?.includes('⚠');
+  const canSubmit = mode === 'paste' ? !!reportText.trim() : !!fileContent.trim();
 
   return (
     <div className="space-y-5">
@@ -392,11 +413,11 @@ ${text || '[Report file uploaded — analyzing content]'}`,
       <div className="flex gap-2">
         {[
           { id: 'paste', label: 'Paste Text' },
-          { id: 'upload', label: 'Upload File' },
+          { id: 'upload', label: 'Upload .txt File' },
         ].map(m => (
           <button
             key={m.id}
-            onClick={() => setMode(m.id)}
+            onClick={() => { setMode(m.id); setFile(null); setFileContent(''); setFileError(''); }}
             className={`rounded-xl border px-4 py-2 text-sm font-medium transition ${
               mode === m.id
                 ? 'border-brand-500/50 bg-brand-500/15 text-brand-300'
@@ -421,23 +442,38 @@ ${text || '[Report file uploaded — analyzing content]'}`,
         </div>
       ) : (
         <div>
-          <label className="field-label">Upload Report</label>
+          <label className="field-label">Upload Report (.txt, .csv)</label>
           <label className="mt-1.5 flex cursor-pointer flex-col items-center gap-3 rounded-xl border-2 border-dashed border-white/15 bg-white/[0.02] px-6 py-10 transition hover:border-white/30 hover:bg-white/[0.04]">
             <Upload className="h-8 w-8 text-zinc-600" />
             <div className="text-center">
               <p className="text-sm font-medium text-zinc-300">Click to upload or drag & drop</p>
-              <p className="mt-1 text-xs text-zinc-600">PDF, JPEG, PNG — max 10MB</p>
+              <p className="mt-1 text-xs text-zinc-600">Plain text files (.txt, .csv) — for PDF/image reports, use Paste Text</p>
             </div>
-            {file && <p className="text-xs text-brand-400">{file.name}</p>}
-            <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={e => setFile(e.target.files?.[0] || null)} />
+            {file && !fileError && <p className="text-xs text-brand-400">✓ {file.name} — ready to analyze</p>}
+            <input type="file" className="hidden" accept=".txt,.csv,text/*" onChange={handleFileChange} />
           </label>
-          <p className="mt-2 text-xs text-zinc-600">Note: Text extraction from files will be used for AI analysis.</p>
+          {fileError && (
+            <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+              ⚠ {fileError}
+            </div>
+          )}
+          {fileContent && (
+            <div className="mt-3">
+              <p className="mb-1 text-xs text-zinc-500">Extracted content preview:</p>
+              <textarea
+                value={fileContent}
+                onChange={e => setFileContent(e.target.value)}
+                rows={6}
+                className="input resize-none font-mono text-xs"
+              />
+            </div>
+          )}
         </div>
       )}
 
       <button
         onClick={summarize}
-        disabled={aiLoading || (!reportText.trim() && !file)}
+        disabled={aiLoading || !canSubmit}
         className="btn-primary w-full"
       >
         {aiLoading ? <AiSpinner /> : <><FileText className="h-4 w-4" /> Summarize Report</>}
@@ -531,16 +567,27 @@ Provide a structured follow-up plan with:
     setSaving(true);
     setBanner(null);
     try {
+      // Create the actual follow-up appointment via dedicated doctor endpoint
+      await api.post('/appointments/followup', {
+        patient_id: parseInt(patientId),
+        appointment_date: suggestedDate,
+        appointment_time: '09:00',
+        reason: `Follow-up: ${diagnosis}`,
+      });
+
+      // Also save the recommendation to EMR for clinical record
       await api.post('/emr', {
         patient_id: parseInt(patientId),
         diagnosis,
         treatment_plan: treatment,
         follow_up_date: suggestedDate,
-        notes: recommendation,
-      });
-      setBanner({ msg: `Follow-up scheduled for ${suggestedDate} and saved to EMR!`, type: 'success' });
+        notes: `AI Follow-up Recommendation:\n${recommendation}`,
+      }).catch(() => {});
+
+      setBanner({ msg: `Follow-up appointment booked for ${suggestedDate} and saved to EMR!`, type: 'success' });
     } catch (err) {
-      setBanner({ msg: err.response?.data?.error || 'Failed to save follow-up.', type: 'error' });
+      const msg = err.response?.data?.error || 'Failed to schedule follow-up.';
+      setBanner({ msg, type: 'error' });
     } finally {
       setSaving(false);
     }

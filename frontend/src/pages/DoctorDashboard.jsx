@@ -93,7 +93,7 @@ export default function DoctorDashboard() {
   const revenueEst = completed.length * (profile?.consultation_fee || 0);
 
   const reviewedEmrIds = new Set(emrs.map(e => e.appointment_id).filter(Boolean));
-  const reportsAwaitingReview = reports.filter(r => !r.ai_analysis_id).length;
+  const reportsAwaitingReview = reports.filter(r => !r.doctor_summary).length;
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Morning' : hour < 17 ? 'Afternoon' : 'Evening';

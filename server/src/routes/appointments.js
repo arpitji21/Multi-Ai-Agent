@@ -77,6 +77,42 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
+// POST /api/appointments/followup — doctor schedules a follow-up for their patient
+router.post('/followup', authenticate, requireRole('doctor'), async (req, res) => {
+  try {
+    const { patient_id, appointment_date, appointment_time, reason } = req.body;
+    if (!patient_id || !appointment_date || !appointment_time) {
+      return res.status(400).json({ error: 'patient_id, appointment_date, and appointment_time are required' });
+    }
+    const docId = await getDoctorId(req.user.id);
+    if (!docId) return res.status(400).json({ error: 'Doctor profile not found' });
+
+    const conflict = await query(
+      `SELECT id FROM appointments WHERE doctor_id=$1 AND appointment_date=$2 AND appointment_time=$3 AND status != 'cancelled'`,
+      [docId, appointment_date, appointment_time]
+    );
+    if (conflict.rows.length > 0) return res.status(409).json({ error: 'This slot is already booked' });
+
+    const result = await query(
+      `INSERT INTO appointments (patient_id, doctor_id, appointment_date, appointment_time, reason, status)
+       VALUES ($1,$2,$3,$4,$5,'booked') RETURNING *`,
+      [patient_id, docId, appointment_date, appointment_time, reason || 'Follow-up consultation']
+    );
+
+    await query(
+      `INSERT INTO notifications (user_id, title, message, type)
+       SELECT u.id, 'Follow-up Appointment Scheduled', $1, 'appointment'
+       FROM patients p JOIN users u ON p.user_id=u.id WHERE p.id=$2`,
+      [`Your doctor has scheduled a follow-up appointment for ${appointment_date} at ${appointment_time}`, patient_id]
+    ).catch(() => {});
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to schedule follow-up appointment' });
+  }
+});
+
 // POST /api/appointments — patient books; admin can book for anyone
 router.post('/', authenticate, async (req, res) => {
   try {
