@@ -16,7 +16,6 @@ router.get('/overview', authenticate, requireRole('admin'), async (req, res) => 
       query(`SELECT COUNT(*) FROM reports WHERE DATE(created_at)=CURRENT_DATE`),
     ]);
 
-    // Monthly revenue for last 12 months
     const revenueHistory = await query(
       `SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'Mon') as month,
               DATE_TRUNC('month', created_at) as month_date,
@@ -28,7 +27,6 @@ router.get('/overview', authenticate, requireRole('admin'), async (req, res) => 
        ORDER BY month_date`
     );
 
-    // Department performance
     const deptPerf = await query(
       `SELECT dep.name, COUNT(a.id) as appointments,
               COALESCE(SUM(p.amount),0) as revenue
@@ -57,7 +55,7 @@ router.get('/overview', authenticate, requireRole('admin'), async (req, res) => 
   }
 });
 
-// GET /api/analytics/revenue — detailed revenue
+// GET /api/analytics/revenue — admin only
 router.get('/revenue', authenticate, requireRole('admin'), async (req, res) => {
   try {
     const result = await query(
@@ -74,7 +72,7 @@ router.get('/revenue', authenticate, requireRole('admin'), async (req, res) => {
   }
 });
 
-// GET /api/analytics/doctor-utilization — admin
+// GET /api/analytics/doctor-utilization — admin only
 router.get('/doctor-utilization', authenticate, requireRole('admin'), async (req, res) => {
   try {
     const result = await query(
@@ -97,7 +95,7 @@ router.get('/doctor-utilization', authenticate, requireRole('admin'), async (req
   }
 });
 
-// GET /api/analytics/appointment-trends
+// GET /api/analytics/appointment-trends — admin only
 router.get('/appointment-trends', authenticate, requireRole('admin'), async (req, res) => {
   try {
     const result = await query(
@@ -116,18 +114,29 @@ router.get('/appointment-trends', authenticate, requireRole('admin'), async (req
   }
 });
 
-// GET /api/analytics/patient-stats/:patient_id — for patient health trends
+// GET /api/analytics/patient-stats/:patient_id
+// - Patient: own stats only
+// - Doctor/Admin: any patient
 router.get('/patient-stats/:patient_id', authenticate, async (req, res) => {
   try {
+    const requestedPatId = parseInt(req.params.patient_id);
+
+    if (req.user.role === 'patient') {
+      const pat = await query(`SELECT id FROM patients WHERE user_id=$1`, [req.user.id]);
+      if (!pat.rows.length || pat.rows[0].id !== requestedPatId) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
+
     const [reports, appointments, analyses] = await Promise.all([
-      query(`SELECT COUNT(*) FROM reports WHERE patient_id=$1`, [req.params.patient_id]),
-      query(`SELECT COUNT(*) FROM appointments WHERE patient_id=$1`, [req.params.patient_id]),
+      query(`SELECT COUNT(*) FROM reports WHERE patient_id=$1`, [requestedPatId]),
+      query(`SELECT COUNT(*) FROM appointments WHERE patient_id=$1`, [requestedPatId]),
       query(
         `SELECT aa.created_at, aa.key_findings
          FROM ai_analyses aa
          JOIN reports r ON aa.report_id = r.id
          WHERE r.patient_id=$1 ORDER BY aa.created_at DESC LIMIT 5`,
-        [req.params.patient_id]
+        [requestedPatId]
       ),
     ]);
     res.json({

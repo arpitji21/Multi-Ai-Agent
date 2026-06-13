@@ -1,4 +1,5 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const { query } = require('../db');
 const { authenticate, requireRole } = require('../middleware/auth');
 
@@ -43,6 +44,36 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
+// POST /api/patients — admin creates a patient (registration handled in /auth/register)
+router.post('/', authenticate, requireRole('admin'), async (req, res) => {
+  try {
+    const { name, email, password, phone, date_of_birth, gender, blood_group, address, emergency_contact, allergies } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'name, email and password are required' });
+    }
+    const existing = await query('SELECT id FROM users WHERE email=$1', [email]);
+    if (existing.rows.length > 0) return res.status(409).json({ error: 'Email already registered' });
+
+    const hashed = await bcrypt.hash(password, 12);
+    const userResult = await query(
+      `INSERT INTO users (name, email, password_hash, role, phone, is_active)
+       VALUES ($1,$2,$3,'patient',$4,true) RETURNING id, name, email, role`,
+      [name, email, hashed, phone || null]
+    );
+    const user = userResult.rows[0];
+    const patResult = await query(
+      `INSERT INTO patients (user_id, date_of_birth, gender, blood_group, address, emergency_contact, allergies)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [user.id, date_of_birth || null, gender || null, blood_group || null,
+       address || null, emergency_contact || null, allergies || null]
+    );
+    res.status(201).json({ ...patResult.rows[0], name: user.name, email: user.email });
+  } catch (err) {
+    console.error('Create patient error:', err);
+    res.status(500).json({ error: 'Failed to create patient' });
+  }
+});
+
 // GET /api/patients/me/profile — patient gets own full profile
 router.get('/me/profile', authenticate, requireRole('patient'), async (req, res) => {
   try {
@@ -81,7 +112,7 @@ router.get('/:id', authenticate, async (req, res) => {
   }
 });
 
-// PUT /api/patients/:id — own record or admin only
+// PUT /api/patients/:id — own record or admin only (doctors cannot edit)
 router.put('/:id', authenticate, async (req, res) => {
   try {
     if (req.user.role === 'doctor') return res.status(403).json({ error: 'Doctors cannot edit patient profiles' });
@@ -97,6 +128,18 @@ router.put('/:id', authenticate, async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update patient' });
+  }
+});
+
+// DELETE /api/patients/:id — admin soft-deletes (deactivates)
+router.delete('/:id', authenticate, requireRole('admin'), async (req, res) => {
+  try {
+    const patCheck = await query(`SELECT user_id FROM patients WHERE id=$1`, [req.params.id]);
+    if (patCheck.rows.length === 0) return res.status(404).json({ error: 'Patient not found' });
+    await query(`UPDATE users SET is_active=false WHERE id=$1`, [patCheck.rows[0].user_id]);
+    res.json({ message: 'Patient deactivated successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to deactivate patient' });
   }
 });
 

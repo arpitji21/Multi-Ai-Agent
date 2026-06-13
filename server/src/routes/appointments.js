@@ -4,7 +4,6 @@ const { authenticate, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Helper: resolve a user's patient_id or doctor_id
 async function getPatientId(userId) {
   const r = await query(`SELECT id FROM patients WHERE user_id=$1`, [userId]);
   return r.rows[0]?.id ?? null;
@@ -14,7 +13,6 @@ async function getDoctorId(userId) {
   return r.rows[0]?.id ?? null;
 }
 
-// Helper: assert the requesting user owns or is staff for an appointment
 async function appointmentAccess(req, res, apptId) {
   const r = await query(`SELECT patient_id, doctor_id FROM appointments WHERE id=$1`, [apptId]);
   if (r.rows.length === 0) { res.status(404).json({ error: 'Appointment not found' }); return false; }
@@ -87,7 +85,6 @@ router.post('/', authenticate, async (req, res) => {
     if (!doctor_id || !appointment_date || !appointment_time) {
       return res.status(400).json({ error: 'doctor_id, appointment_date, and appointment_time are required' });
     }
-
     let patient_id = req.body.patient_id;
     if (req.user.role === 'patient') {
       const patId = await getPatientId(req.user.id);
@@ -169,9 +166,6 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // PUT /api/appointments/:id/status
-// - Patient: can only cancel their own
-// - Doctor: can confirm/complete their own
-// - Admin: any status
 router.put('/:id/status', authenticate, async (req, res) => {
   try {
     const { status } = req.body;
@@ -181,7 +175,6 @@ router.put('/:id/status', authenticate, async (req, res) => {
     const access = await appointmentAccess(req, res, req.params.id);
     if (!access) return;
 
-    // Restrict patient to cancellation only
     if (req.user.role === 'patient' && status !== 'cancelled') {
       return res.status(403).json({ error: 'Patients can only cancel appointments' });
     }
@@ -215,6 +208,29 @@ router.put('/:id/reschedule', authenticate, async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to reschedule' });
+  }
+});
+
+// DELETE /api/appointments/:id — admin or patient (own, if cancellable)
+router.delete('/:id', authenticate, async (req, res) => {
+  try {
+    if (req.user.role === 'doctor') return res.status(403).json({ error: 'Forbidden' });
+    const access = await appointmentAccess(req, res, req.params.id);
+    if (!access) return;
+
+    if (req.user.role === 'admin') {
+      await query(`DELETE FROM appointments WHERE id=$1`, [req.params.id]);
+    } else {
+      // Patient: only cancel (soft delete) pending appointments
+      const appt = await query(`SELECT status FROM appointments WHERE id=$1`, [req.params.id]);
+      if (['completed', 'cancelled'].includes(appt.rows[0]?.status)) {
+        return res.status(400).json({ error: 'Cannot delete a completed or already-cancelled appointment' });
+      }
+      await query(`UPDATE appointments SET status='cancelled', updated_at=NOW() WHERE id=$1`, [req.params.id]);
+    }
+    res.json({ message: 'Appointment removed' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete appointment' });
   }
 });
 

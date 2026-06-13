@@ -83,7 +83,7 @@ router.get('/stats/overview', authenticate, requireRole('admin'), async (req, re
   }
 });
 
-// POST /api/reports/upload — patient uploads own, doctor/admin can upload for any patient
+// POST /api/reports/upload
 router.post('/upload', authenticate, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -134,7 +134,7 @@ router.get('/patient/:patient_id/timeline', authenticate, async (req, res) => {
   }
 });
 
-// GET /api/reports/:id — own report (patient), staff (doctor/admin)
+// GET /api/reports/:id — own report (patient) or staff
 router.get('/:id', authenticate, async (req, res) => {
   try {
     const result = await query(
@@ -147,7 +147,6 @@ router.get('/:id', authenticate, async (req, res) => {
       [req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
-
     const report = result.rows[0];
     if (req.user.role === 'patient' && report.patient_user_id !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden' });
@@ -155,6 +154,46 @@ router.get('/:id', authenticate, async (req, res) => {
     res.json(report);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch report' });
+  }
+});
+
+// PUT /api/reports/:id — admin or doctor can update metadata
+router.put('/:id', authenticate, requireRole('admin', 'doctor'), async (req, res) => {
+  try {
+    const { report_type, notes } = req.body;
+    const result = await query(
+      `UPDATE reports SET
+         report_type=COALESCE($1,report_type),
+         notes=COALESCE($2,notes)
+       WHERE id=$3 RETURNING *`,
+      [report_type || null, notes || null, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update report' });
+  }
+});
+
+// DELETE /api/reports/:id — admin or own patient
+router.delete('/:id', authenticate, async (req, res) => {
+  try {
+    if (req.user.role === 'doctor') return res.status(403).json({ error: 'Forbidden' });
+    const check = await query(`SELECT r.id, p.user_id FROM reports r JOIN patients p ON r.patient_id=p.id WHERE r.id=$1`, [req.params.id]);
+    if (check.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
+    if (req.user.role === 'patient' && check.rows[0].user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    // Delete associated file from disk
+    const fileCheck = await query(`SELECT file_path FROM reports WHERE id=$1`, [req.params.id]);
+    if (fileCheck.rows.length > 0) {
+      const filePath = path.join(uploadDir, fileCheck.rows[0].file_path);
+      fs.unlink(filePath, () => {});
+    }
+    await query(`DELETE FROM reports WHERE id=$1`, [req.params.id]);
+    res.json({ message: 'Report deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete report' });
   }
 });
 
