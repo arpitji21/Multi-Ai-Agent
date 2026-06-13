@@ -17,6 +17,9 @@ const analyticsRoutes = require('./routes/analytics');
 const emrRoutes = require('./routes/emr');
 const paymentRoutes = require('./routes/payments');
 const aiRoutes = require('./routes/ai');
+const adminRoutes = require('./routes/admins');
+
+const { auditLog } = require('./middleware/audit');
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -31,14 +34,13 @@ app.use(cors({
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 500,
   standardHeaders: true,
   legacyHeaders: false,
 });
 app.use(limiter);
 
-// Stricter limiter for auth
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
@@ -49,13 +51,17 @@ const authLimiter = rateLimit({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Logging
+// HTTP request logging
 if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('combined'));
 }
 
 // Static file serving for uploaded reports
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// Audit logging middleware — runs after routes have populated req.user
+// auditLog is a no-op if req.user is absent (public/unauth routes)
+app.use('/api', auditLog);
 
 // Routes
 app.use('/api/auth', authLimiter, authRoutes);
@@ -69,8 +75,9 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/emr', emrRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/admins', adminRoutes);
 
-// Health check
+// Health check — public
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', service: 'MediAI Hospital Suite API', timestamp: new Date().toISOString() });
 });
