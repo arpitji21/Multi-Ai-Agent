@@ -59,8 +59,10 @@ router.put('/:id', authenticate, requireRole('admin'), async (req, res) => {
 });
 
 // DELETE /api/departments/:id — admin only
+// Unlinks assigned doctors before deleting to avoid FK constraint failure
 router.delete('/:id', authenticate, requireRole('admin'), async (req, res) => {
   try {
+    await query(`UPDATE doctors SET department_id=NULL WHERE department_id=$1`, [req.params.id]);
     await query(`DELETE FROM departments WHERE id=$1`, [req.params.id]);
     res.json({ message: 'Department deleted' });
   } catch (err) {
