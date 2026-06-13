@@ -1,0 +1,147 @@
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { query } = require('../db');
+const { authenticate } = require('../middleware/auth');
+
+const router = express.Router();
+
+// Configure multer for local storage (reports)
+const uploadDir = path.join(__dirname, '../../uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    cb(null, `${unique}${path.extname(file.originalname)}`);
+  },
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.pdf', '.jpg', '.jpeg', '.png'];
+    if (allowed.includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
+    else cb(new Error('Only PDF, JPG, PNG files are allowed'));
+  },
+});
+
+// GET /api/reports - get reports for current user
+router.get('/', authenticate, async (req, res) => {
+  try {
+    let result;
+    if (req.user.role === 'patient') {
+      const pat = await query(`SELECT id FROM patients WHERE user_id=$1`, [req.user.id]);
+      if (pat.rows.length === 0) return res.json([]);
+      result = await query(
+        `SELECT r.*, aa.patient_summary, aa.doctor_summary, aa.key_findings, aa.is_critical
+         FROM reports r
+         LEFT JOIN ai_analyses aa ON aa.report_id = r.id
+         WHERE r.patient_id=$1 ORDER BY r.created_at DESC`,
+        [pat.rows[0].id]
+      );
+    } else if (req.user.role === 'doctor') {
+      result = await query(
+        `SELECT r.*, u.name as patient_name, aa.patient_summary, aa.doctor_summary, aa.is_critical
+         FROM reports r
+         JOIN patients p ON r.patient_id = p.id
+         JOIN users u ON p.user_id = u.id
+         LEFT JOIN ai_analyses aa ON aa.report_id = r.id
+         ORDER BY r.created_at DESC LIMIT 50`
+      );
+    } else {
+      result = await query(
+        `SELECT r.*, u.name as patient_name
+         FROM reports r
+         JOIN patients p ON r.patient_id = p.id
+         JOIN users u ON p.user_id = u.id
+         ORDER BY r.created_at DESC LIMIT 100`
+      );
+    }
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch reports' });
+  }
+});
+
+// POST /api/reports/upload
+router.post('/upload', authenticate, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const { report_type, notes } = req.body;
+
+    let patient_id = req.body.patient_id;
+    if (req.user.role === 'patient') {
+      const pat = await query(`SELECT id FROM patients WHERE user_id=$1`, [req.user.id]);
+      if (pat.rows.length === 0) return res.status(400).json({ error: 'Patient profile not found' });
+      patient_id = pat.rows[0].id;
+    }
+
+    const result = await query(
+      `INSERT INTO reports (patient_id, file_name, file_path, file_type, report_type, notes, file_size)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [patient_id, req.file.originalname, req.file.filename, req.file.mimetype,
+       report_type || 'general', notes || '', req.file.size]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to upload report' });
+  }
+});
+
+// GET /api/reports/:id
+router.get('/:id', authenticate, async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT r.*, aa.patient_summary, aa.doctor_summary, aa.key_findings, aa.abnormal_values, aa.is_critical
+       FROM reports r
+       LEFT JOIN ai_analyses aa ON aa.report_id = r.id
+       WHERE r.id=$1`,
+      [req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch report' });
+  }
+});
+
+// GET /api/reports/patient/:patient_id/timeline
+router.get('/patient/:patient_id/timeline', authenticate, async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT r.id, r.file_name, r.report_type, r.created_at,
+              aa.patient_summary, aa.is_critical, aa.key_findings
+       FROM reports r
+       LEFT JOIN ai_analyses aa ON aa.report_id = r.id
+       WHERE r.patient_id=$1 ORDER BY r.created_at DESC`,
+      [req.params.patient_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch timeline' });
+  }
+});
+
+// GET /api/reports/stats/overview — admin
+router.get('/stats/overview', authenticate, async (req, res) => {
+  try {
+    const [total, today, pending] = await Promise.all([
+      query(`SELECT COUNT(*) FROM reports`),
+      query(`SELECT COUNT(*) FROM reports WHERE DATE(created_at)=CURRENT_DATE`),
+      query(`SELECT COUNT(*) FROM reports r LEFT JOIN ai_analyses aa ON aa.report_id=r.id WHERE aa.id IS NULL`),
+    ]);
+    res.json({
+      total: parseInt(total.rows[0].count),
+      today: parseInt(today.rows[0].count),
+      pending_analysis: parseInt(pending.rows[0].count),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch report stats' });
+  }
+});
+
+module.exports = router;

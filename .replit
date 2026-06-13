@@ -38,13 +38,13 @@ outputType = "webview"
 name = "Backend API"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd backend && uvicorn main:app --host localhost --port 8000 --reload"
-waitForPort = 8000
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd server && node src/index.js"
+waitForPort = 8000
 
 [[ports]]
 localPort = 5000
@@ -53,9 +53,8 @@ externalPort = 80
 [[ports]]
 localPort = 8000
 externalPort = 8000
-exposeLocalhost = true
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["bash", "-c", "cd backend && gunicorn --bind=0.0.0.0:5000 --reuse-port --workers=2 -k uvicorn.workers.UvicornWorker main:app"]
+run = ["bash", "-c", "cd server && node src/index.js & cd /home/runner/workspace/frontend && npx serve -s dist -l 5000 --no-clipboard"]
 build = ["bash", "-c", "cd frontend && npm run build"]
