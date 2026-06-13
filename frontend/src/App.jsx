@@ -12,6 +12,8 @@ import DoctorDashboard from './pages/DoctorDashboard';
 import DoctorPatientView from './pages/DoctorPatientView';
 import DoctorAITools from './pages/DoctorAITools';
 import AdminDashboard from './pages/AdminDashboard';
+import AdminDoctors from './pages/AdminDoctors';
+import AdminDepartments from './pages/AdminDepartments';
 
 const PATIENT_NAV = [
   { to: '/dashboard', label: 'Overview', end: true },
@@ -28,10 +30,10 @@ const DOCTOR_NAV = [
 
 const ADMIN_NAV = [
   { to: '/admin', label: 'Dashboard', end: true },
-  { to: '/admin/patients', label: 'Patients' },
   { to: '/admin/doctors', label: 'Doctors' },
+  { to: '/admin/departments', label: 'Departments' },
+  { to: '/admin/patients', label: 'Patients' },
   { to: '/admin/appointments', label: 'Appointments' },
-  { to: '/admin/analytics', label: 'Analytics' },
 ];
 
 function RoleRouter() {
@@ -146,17 +148,17 @@ function App() {
         } />
         <Route path="/admin/doctors" element={
           <ProtectedRoute allowedRoles={['admin']}>
-            <AdminShell><Patients /></AdminShell>
+            <AdminShell><AdminDoctors /></AdminShell>
+          </ProtectedRoute>
+        } />
+        <Route path="/admin/departments" element={
+          <ProtectedRoute allowedRoles={['admin']}>
+            <AdminShell><AdminDepartments /></AdminShell>
           </ProtectedRoute>
         } />
         <Route path="/admin/appointments" element={
           <ProtectedRoute allowedRoles={['admin']}>
             <AdminShell><Appointments /></AdminShell>
-          </ProtectedRoute>
-        } />
-        <Route path="/admin/analytics" element={
-          <ProtectedRoute allowedRoles={['admin']}>
-            <AdminShell><AdminDashboard /></AdminShell>
           </ProtectedRoute>
         } />
 
