@@ -37,6 +37,7 @@ export default function DoctorPatientView() {
   const [history, setHistory] = useState([]);
   const [reminders, setReminders] = useState([]);
   const [emrs, setEmrs] = useState([]);
+  const [reports, setReports] = useState([]);
   const [appointment, setAppointment] = useState(null);
   const [loading, setLoading] = useState(true);
   const [aiSummary, setAiSummary] = useState(null);
@@ -50,17 +51,22 @@ export default function DoctorPatientView() {
   async function load() {
     setLoading(true);
     try {
-      const [patRes, histRes, remRes, emrRes, apptRes] = await Promise.all([
+      const [patRes, histRes, remRes, emrRes, apptRes, rptRes] = await Promise.all([
         api.get(`/patients/${patientId}`),
         api.get(`/patients/${patientId}/medical-history`).catch(() => ({ data: [] })),
         api.get(`/patients/${patientId}/medicine-reminders`).catch(() => ({ data: [] })),
         api.get('/emr').catch(() => ({ data: [] })),
         api.get('/appointments').catch(() => ({ data: [] })),
+        api.get('/reports').catch(() => ({ data: [] })),
       ]);
       setPatient(patRes.data);
       setHistory(histRes.data || []);
       setReminders(remRes.data || []);
       setEmrs((emrRes.data || []).filter(e => e.patient_id === parseInt(patientId)));
+      // Filter reports to this patient by matching patient name or patient_id field
+      const allReports = rptRes.data || [];
+      const pid = parseInt(patientId);
+      setReports(allReports.filter(r => r.patient_id === pid));
       if (apptId) {
         const found = (apptRes.data || []).find(a => a.id === parseInt(apptId));
         setAppointment(found || null);
@@ -75,20 +81,44 @@ export default function DoctorPatientView() {
   async function generateAiSummary() {
     setAiLoading(true);
     try {
-      const historyText = history.map(h => `${h.condition}: ${h.treatment}`).join('; ');
-      const medsText = reminders.map(r => r.medicine_name).join(', ');
+      const historyText = history.map(h => `${h.condition || h.diagnosis}: ${h.treatment}`).join('; ');
+      const medsText = reminders.map(r => `${r.medication_name} ${r.dosage || ''} (${r.frequency || ''})`).join(', ');
       const lastEMR = emrs[0];
+      const reportsText = reports.length > 0
+        ? reports.map(r => {
+            const findings = r.doctor_summary || r.patient_summary || r.key_findings || null;
+            return `${r.report_type || 'Report'} (${r.created_at?.split('T')[0]}): ${findings || 'No AI analysis yet'}`;
+          }).join('\n')
+        : 'No prior reports on file';
 
       const res = await api.post('/ai/chat', {
-        message: `Generate a concise pre-appointment clinical summary for patient ${patient?.name}. 
-Medical history: ${historyText || 'None on file'}. 
-Current medications: ${medsText || 'None on file'}. 
-Last EMR diagnosis: ${lastEMR?.diagnosis || 'No previous EMR'}.
-Blood group: ${patient?.blood_group || 'Unknown'}. 
-Allergies: ${patient?.allergies || 'None known'}.
-Health score: ${patient?.health_score || 'N/A'}.
-Appointment reason: ${appointment?.reason || 'General consultation'}.
-Provide: key clinical points, medication review, areas to assess, and any alerts.`,
+        message: `Generate a concise pre-appointment clinical summary for patient ${patient?.name}.
+
+PATIENT DEMOGRAPHICS:
+Blood group: ${patient?.blood_group || 'Unknown'}
+Allergies: ${patient?.allergies || 'None known'}
+Health score: ${patient?.health_score || 'N/A'}
+
+MEDICAL HISTORY:
+${historyText || 'None on file'}
+
+CURRENT MEDICATIONS:
+${medsText || 'None on file'}
+
+PREVIOUS REPORTS:
+${reportsText}
+
+LAST EMR DIAGNOSIS:
+${lastEMR?.diagnosis || 'No previous EMR'} ${lastEMR?.treatment_plan ? `— Treatment: ${lastEMR.treatment_plan}` : ''}
+
+APPOINTMENT REASON: ${appointment?.reason || 'General consultation'}
+
+Provide a structured pre-appointment briefing covering:
+1. KEY CLINICAL POINTS: Most important facts for the doctor to know
+2. MEDICATION REVIEW: Current meds, potential interactions, refill needs
+3. PREVIOUS REPORT HIGHLIGHTS: Key findings from past reports
+4. AREAS TO ASSESS: What to focus on in today's consultation
+5. ALERTS: Any critical flags (allergies, abnormal values, urgent concerns)`,
         context: { type: 'pre_appointment_summary', patient_id: patientId },
       });
       setAiSummary(res.data.reply);
