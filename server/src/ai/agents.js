@@ -27,13 +27,115 @@ function resolveAgentType(contextType, userRole) {
     patient: 'patient_assistant',
     patient_assistant: 'patient_assistant',
   };
-
   if (contextType && map[contextType]) return map[contextType];
-
-  // Route by role if no context type
   if (userRole === 'doctor') return 'doctor_assistant';
   if (userRole === 'admin') return 'admin_assistant';
   return 'patient_assistant';
+}
+
+/* ── Appointment Scheduling Agent ── */
+async function runAppointmentScheduler(message, userId, history) {
+  try {
+    // Load available doctors and slots
+    const doctorsRes = await query(`
+      SELECT d.id, u.name, d.specialization, d.consultation_fee, dep.name AS department
+      FROM doctors d
+      JOIN users u ON u.id=d.user_id
+      LEFT JOIN departments dep ON dep.id=d.department_id
+      WHERE d.available=true
+      ORDER BY d.specialization
+    `);
+
+    const today = new Date().toISOString().split('T')[0];
+    const nextWeek = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+
+    // Get booked slots so we can show available ones
+    const bookedRes = await query(`
+      SELECT doctor_id, appointment_date, appointment_time
+      FROM appointments
+      WHERE appointment_date BETWEEN $1 AND $2
+        AND status NOT IN ('cancelled')
+    `, [today, nextWeek]);
+
+    const bookedMap = {};
+    for (const b of bookedRes.rows) {
+      const key = `${b.doctor_id}_${b.appointment_date}`;
+      if (!bookedMap[key]) bookedMap[key] = new Set();
+      bookedMap[key].add(b.appointment_time);
+    }
+
+    const TIME_SLOTS = ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'];
+    const DATES = [];
+    for (let i = 1; i <= 5; i++) {
+      const d = new Date(Date.now() + i * 86400000);
+      if (d.getDay() !== 0 && d.getDay() !== 6) {
+        DATES.push(d.toISOString().split('T')[0]);
+      }
+    }
+
+    // Build slot summary for AI
+    const doctorSlots = doctorsRes.rows.map(doc => {
+      const available = [];
+      for (const date of DATES.slice(0, 3)) {
+        const key = `${doc.id}_${date}`;
+        const freeSlots = TIME_SLOTS.filter(t => !bookedMap[key]?.has(t));
+        if (freeSlots.length > 0) {
+          available.push({ date, slots: freeSlots.slice(0, 3) });
+        }
+      }
+      return { ...doc, available_slots: available };
+    });
+
+    const systemPrompt = getSystemPrompt('appointment_scheduler');
+    const contextMsg = `[Available Doctors & Slots]\n${doctorSlots.map(d =>
+      `Dr. ${d.name} (ID:${d.id}) - ${d.specialization}${d.department ? ` / ${d.department}` : ''} - $${d.consultation_fee || 0}/visit\nAvailable: ${d.available_slots.map(s => `${s.date} at ${s.slots.join(', ')}`).join(' | ') || 'No slots in next 3 days'}`
+    ).join('\n')}\n\n[Patient Request]\n${message}`;
+
+    const reply = await callAI(systemPrompt, contextMsg, {
+      agentType: 'appointment_scheduler',
+      context: { doctors: doctorSlots },
+      history,
+      maxTokens: 800,
+    });
+
+    // Check if this is a booking confirmation (message contains "confirm", "book" + doctor id / slot info)
+    const msgLower = message.toLowerCase();
+    const isConfirmation = msgLower.includes('confirm') || msgLower.includes('book slot') || msgLower.includes('yes, book');
+
+    if (isConfirmation && userId) {
+      // Try to extract doctor_id and slot from message or history
+      const doctorIdMatch = message.match(/Dr\.?\s*[Ii][Dd][\s:]*(\d+)|doctor\s+(\d+)|id[\s:]*(\d+)/i);
+      const dateMatch = message.match(/(\d{4}-\d{2}-\d{2})/);
+      const timeMatch = message.match(/(\d{1,2}:\d{2})/);
+
+      if (doctorIdMatch && dateMatch && timeMatch) {
+        const doctorId = parseInt(doctorIdMatch[1] || doctorIdMatch[2] || doctorIdMatch[3]);
+        const aptDate = dateMatch[1];
+        const aptTime = timeMatch[1];
+        try {
+          const patRes = await query(`SELECT id FROM patients WHERE user_id=$1`, [userId]);
+          if (patRes.rows.length > 0) {
+            await query(
+              `INSERT INTO appointments (patient_id, doctor_id, appointment_date, appointment_time, reason, status)
+               VALUES ($1,$2,$3,$4,$5,'booked')`,
+              [patRes.rows[0].id, doctorId, aptDate, aptTime, message.slice(0, 200)]
+            );
+            return { reply: typeof reply === 'string' ? reply + '\n\n✅ **Appointment successfully booked!** You will find it in your appointments list.' : 'Appointment booked successfully!', agentType: 'appointment_scheduler', booked: true };
+          }
+        } catch (bookErr) {
+          console.error('Booking error:', bookErr.message);
+        }
+      }
+    }
+
+    return { reply: typeof reply === 'string' ? reply : JSON.stringify(reply), agentType: 'appointment_scheduler' };
+  } catch (e) {
+    console.error('Appointment scheduler error:', e.message);
+    return {
+      reply: 'To book an appointment, please go to the **Appointments** tab and click **Book New Appointment**. You can select your preferred doctor, date, and time slot from there.',
+      agentType: 'appointment_scheduler',
+    };
+  }
 }
 
 /* ── Orchestrator ── */
@@ -41,8 +143,13 @@ async function orchestrate({ message, context, userRole, userId, history }) {
   const agentType = resolveAgentType(context?.type, userRole);
   const systemPrompt = getSystemPrompt(agentType);
 
-  // Enrich context with relevant DB data
+  // Appointment scheduler has its own flow
+  if (agentType === 'appointment_scheduler') {
+    return runAppointmentScheduler(message, userId, history);
+  }
+
   let enrichedContext = { ...context };
+  let enrichedMessage = message;
 
   if (agentType === 'admin_assistant' || agentType === 'hospital_analytics') {
     try {
@@ -54,7 +161,7 @@ async function orchestrate({ message, context, userRole, userId, history }) {
             (SELECT COUNT(*) FROM doctors) AS total_doctors,
             (SELECT COUNT(*) FROM appointments WHERE appointment_date=CURRENT_DATE) AS today_appointments,
             (SELECT COUNT(*) FROM appointments WHERE status='completed' AND appointment_date >= NOW() - INTERVAL '30 days') AS monthly_completed,
-            (SELECT COALESCE(SUM(amount),0) FROM payments WHERE status='paid' AND created_at >= NOW() - INTERVAL '30 days') AS monthly_revenue
+            (SELECT COALESCE(SUM(amount),0) FROM payments WHERE status='completed' AND created_at >= NOW() - INTERVAL '30 days') AS monthly_revenue
         `),
         query(`
           SELECT dep.name, COUNT(a.id) AS appointments,
@@ -62,14 +169,14 @@ async function orchestrate({ message, context, userRole, userId, history }) {
           FROM departments dep
           LEFT JOIN doctors doc ON doc.department_id=dep.id
           LEFT JOIN appointments a ON a.doctor_id=doc.id AND a.created_at >= NOW() - INTERVAL '30 days'
-          LEFT JOIN payments pay ON pay.appointment_id=a.id AND pay.status='paid'
+          LEFT JOIN payments pay ON pay.appointment_id=a.id AND pay.status='completed'
           GROUP BY dep.name ORDER BY revenue DESC LIMIT 5
         `),
         query(`
           SELECT TO_CHAR(DATE_TRUNC('month', created_at),'Mon YYYY') AS month,
                  COALESCE(SUM(amount),0) AS revenue,
                  COUNT(*) AS transactions
-          FROM payments WHERE status='paid'
+          FROM payments WHERE status='completed'
           GROUP BY DATE_TRUNC('month', created_at)
           ORDER BY DATE_TRUNC('month', created_at) DESC LIMIT 6
         `),
@@ -77,8 +184,17 @@ async function orchestrate({ message, context, userRole, userId, history }) {
       enrichedContext.stats = statsRes.rows[0];
       enrichedContext.department_performance = deptRes.rows;
       enrichedContext.revenue_history = revRes.rows.reverse();
+
+      const s = enrichedContext.stats;
+      const deptSummary = (enrichedContext.department_performance || [])
+        .map(d => `${d.name}: ${d.appointments} appts, $${parseFloat(d.revenue).toLocaleString()} revenue`)
+        .join('; ');
+      const revSummary = (enrichedContext.revenue_history || [])
+        .map(r => `${r.month}: $${parseFloat(r.revenue).toLocaleString()}`)
+        .join(', ');
+      enrichedMessage = `[Hospital Context - Live Data]\nPatients: ${s.total_patients}, Doctors: ${s.total_doctors} (${s.active_doctors} active), Today's appointments: ${s.today_appointments}, Monthly revenue: $${parseFloat(s.monthly_revenue || 0).toLocaleString()}, Monthly completed appointments: ${s.monthly_completed}\nDepartment performance (last 30 days): ${deptSummary || 'No data'}\nRevenue history: ${revSummary || 'No data'}\n\n[Question]\n${message}`;
     } catch (e) {
-      console.error('Context enrichment error:', e.message);
+      console.error('Admin context enrichment error:', e.message);
     }
   }
 
@@ -86,12 +202,25 @@ async function orchestrate({ message, context, userRole, userId, history }) {
     try {
       const [patRes, apptRes, rptRes] = await Promise.all([
         query(`SELECT p.*, u.email FROM patients p JOIN users u ON u.id=p.user_id WHERE p.id=$1`, [context.patient_id]),
-        query(`SELECT a.*, d.specialty FROM appointments a JOIN doctors d ON d.id=a.doctor_id WHERE a.patient_id=$1 ORDER BY a.appointment_date DESC LIMIT 3`, [context.patient_id]),
+        query(`
+          SELECT a.*, d.specialization FROM appointments a
+          JOIN doctors d ON d.id=a.doctor_id
+          WHERE a.patient_id=$1 ORDER BY a.appointment_date DESC LIMIT 3
+        `, [context.patient_id]),
         query(`SELECT r.*, aa.patient_summary, aa.abnormal_values, aa.is_critical FROM reports r LEFT JOIN ai_analyses aa ON aa.report_id=r.id WHERE r.patient_id=$1 ORDER BY r.created_at DESC LIMIT 3`, [context.patient_id]),
       ]);
       enrichedContext.patient = patRes.rows[0];
       enrichedContext.recent_appointments = apptRes.rows;
       enrichedContext.recent_reports = rptRes.rows;
+
+      if (enrichedContext.patient) {
+        const p = enrichedContext.patient;
+        const age = p.date_of_birth ? Math.floor((Date.now() - new Date(p.date_of_birth)) / 31557600000) : 'unknown';
+        const recentRpts = (enrichedContext.recent_reports || []).map(r =>
+          `${r.report_type} (${r.created_at?.split('T')[0]}): ${r.patient_summary || 'No AI analysis'}`
+        ).join('; ') || 'None';
+        enrichedMessage = `[Patient Context]\nName: ${p.first_name} ${p.last_name}, Age: ${age}, Gender: ${p.gender || 'unknown'}\nBlood Group: ${p.blood_group || 'unknown'}, Allergies: ${p.allergies || 'none'}, Health Score: ${p.health_score}/100\nRecent Reports: ${recentRpts}\n\n[Request]\n${message}`;
+      }
     } catch (e) {
       console.error('Doctor context enrichment error:', e.message);
     }
@@ -104,29 +233,7 @@ async function orchestrate({ message, context, userRole, userId, history }) {
         FROM patients p JOIN users u ON u.id=p.user_id WHERE u.id=$1
       `, [userId]);
       if (patRes.rows[0]) enrichedContext.health_score = patRes.rows[0].health_score;
-    } catch (e) {}
-  }
-
-  // Build enriched user message
-  let enrichedMessage = message;
-
-  if ((agentType === 'admin_assistant' || agentType === 'hospital_analytics') && enrichedContext.stats) {
-    const s = enrichedContext.stats;
-    const deptSummary = (enrichedContext.department_performance || [])
-      .map(d => `${d.name}: ${d.appointments} appts, $${parseFloat(d.revenue).toLocaleString()} revenue`)
-      .join('; ');
-    const revSummary = (enrichedContext.revenue_history || [])
-      .map(r => `${r.month}: $${parseFloat(r.revenue).toLocaleString()}`)
-      .join(', ');
-    enrichedMessage = `[Hospital Context]\nPatients: ${s.total_patients}, Doctors: ${s.total_doctors} (${s.active_doctors} active), Today's appointments: ${s.today_appointments}, Monthly revenue: $${parseFloat(s.monthly_revenue || 0).toLocaleString()}, Monthly completed appointments: ${s.monthly_completed}\nDepartment performance (last 30 days): ${deptSummary || 'No data'}\nRevenue history: ${revSummary || 'No data'}\n\n[User Question]\n${message}`;
-  }
-
-  if (agentType === 'doctor_assistant' && enrichedContext.patient) {
-    const p = enrichedContext.patient;
-    const recentRpts = (enrichedContext.recent_reports || []).map(r =>
-      `${r.report_type} (${r.created_at?.split('T')[0]}): ${r.patient_summary || 'No AI analysis'}`
-    ).join('; ') || 'None';
-    enrichedMessage = `[Patient Context]\nName: ${p.first_name} ${p.last_name}, Age: ${p.date_of_birth ? Math.floor((Date.now() - new Date(p.date_of_birth)) / 31557600000) : 'unknown'}, Gender: ${p.gender || 'unknown'}\nBlood Group: ${p.blood_group || 'unknown'}, Allergies: ${p.allergies || 'none'}, Health Score: ${p.health_score}/100\nRecent Reports: ${recentRpts}\n\n[Doctor Request]\n${message}`;
+    } catch (e) { /* non-fatal */ }
   }
 
   const reply = await callAI(systemPrompt, enrichedMessage, {
@@ -139,28 +246,66 @@ async function orchestrate({ message, context, userRole, userId, history }) {
   return { reply: typeof reply === 'string' ? reply : JSON.stringify(reply, null, 2), agentType };
 }
 
-/* ── Report Analysis Agent ── */
-async function analyzeReport(report, existingAnalysis) {
-  // Try to read the uploaded file content
-  let fileContent = '';
-  if (report.file_path) {
-    const uploadsDir = path.join(__dirname, '../../uploads');
-    const filePath = path.join(uploadsDir, report.file_path);
+/* ── PDF text extraction ── */
+async function extractTextFromReport(report) {
+  if (!report.file_path) return '';
+
+  const uploadsDir = path.join(__dirname, '../../uploads');
+  const filePath = path.join(uploadsDir, report.file_path);
+
+  if (!fs.existsSync(filePath)) return '';
+
+  const fileType = (report.file_type || '').toLowerCase();
+  const fileName = (report.file_name || '').toLowerCase();
+
+  // Plain text files
+  if (fileType.includes('text') || fileName.endsWith('.txt') || fileName.endsWith('.csv')) {
     try {
-      if (fs.existsSync(filePath) && (report.file_type?.includes('text') || report.file_name?.endsWith('.txt'))) {
-        fileContent = fs.readFileSync(filePath, 'utf8').slice(0, 3000);
-      }
-    } catch (e) { /* ignore */ }
+      return fs.readFileSync(filePath, 'utf8').slice(0, 4000);
+    } catch (e) { return ''; }
   }
 
+  // PDF files
+  if (fileType.includes('pdf') || fileName.endsWith('.pdf')) {
+    try {
+      const pdfParse = require('pdf-parse');
+      const buffer = fs.readFileSync(filePath);
+      const data = await pdfParse(buffer);
+      return (data.text || '').slice(0, 4000);
+    } catch (e) {
+      console.error('PDF parse error:', e.message);
+      return '';
+    }
+  }
+
+  // Image files — can't extract text without OCR; return empty string (will use metadata-based analysis)
+  return '';
+}
+
+/* ── Report Analysis Agent ── */
+async function analyzeReport(report) {
+  const fileContent = await extractTextFromReport(report);
+  const hasContent = fileContent.trim().length > 20;
+
   const systemPrompt = getSystemPrompt('report_analysis');
-  const userMessage = `Analyze this medical report and return structured JSON analysis.
+  const userMessage = hasContent
+    ? `Analyze this medical report and return structured JSON.
+
+Report Type: ${report.report_type || 'general'}
+File Name: ${report.file_name}
+
+Report Content:
+${fileContent}
+
+Return ONLY valid JSON matching the schema in your instructions.`
+    : `Analyze this medical report based on type/metadata and return structured JSON.
 
 Report Type: ${report.report_type || 'general'}
 File Name: ${report.file_name}
 File Type: ${report.file_type || 'unknown'}
 Patient Notes: ${report.notes || 'none'}
-${fileContent ? `\nReport Content:\n${fileContent}` : '\n[Binary file — analyze based on report type and available metadata]'}
+
+Note: File content could not be extracted (binary format). Generate a professional template analysis for this report type.
 
 Return ONLY valid JSON matching the schema in your instructions.`;
 
@@ -171,12 +316,12 @@ Return ONLY valid JSON matching the schema in your instructions.`;
       temperature: 0.3,
     });
 
-    // Parse JSON response
     let parsed;
-    if (typeof raw === 'object') {
+    if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
       parsed = raw;
     } else {
-      const jsonMatch = raw.match(/\{[\s\S]+\}/);
+      const str = typeof raw === 'string' ? raw : '';
+      const jsonMatch = str.match(/\{[\s\S]+\}/);
       if (!jsonMatch) throw new Error('No JSON in response');
       parsed = JSON.parse(jsonMatch[0]);
     }
@@ -192,7 +337,7 @@ Return ONLY valid JSON matching the schema in your instructions.`;
       health_score_impact: typeof parsed.health_score_impact === 'number' ? parsed.health_score_impact : 0,
     };
   } catch (err) {
-    // Intelligent fallback for report analysis
+    console.error('Report analysis parse error:', err.message);
     return generateReportFallback(report, 'full');
   }
 }
@@ -201,39 +346,34 @@ function generateReportFallback(report, mode) {
   const type = (report.report_type || 'general').toLowerCase();
   const typeMap = {
     blood: {
-      patient_summary: 'Your blood test results have been received and reviewed. The report provides important information about your blood cell counts, chemistry, and overall blood health. Please discuss the specific values with your doctor at your next appointment.',
-      doctor_summary: `CBC/Blood panel received. Patient: ${report.file_name}. Complete hematological and biochemical review recommended. Compare with baseline values and assess clinical correlation.`,
-      key_findings: ['Blood panel received', 'Complete blood count analyzed', 'Biochemical markers recorded'],
-      abnormal_values: [],
+      patient_summary: 'Your blood test results have been received and reviewed. The report provides information about your blood cell counts, chemistry, and overall blood health. Please discuss the specific values with your doctor at your next appointment.',
+      doctor_summary: `CBC/Blood panel received. File: ${report.file_name}. Hematological and biochemical review recommended. Compare with baseline values and assess clinical correlation.`,
+      key_findings: ['Blood panel received', 'Complete blood count documented', 'Biochemical markers recorded'],
     },
     ecg: {
-      patient_summary: 'Your ECG (heart tracing) report has been uploaded and is ready for your doctor\'s review. The ECG records the electrical activity of your heart. Your cardiologist will interpret the findings at your appointment.',
-      doctor_summary: 'ECG tracing received. Rhythm analysis, axis deviation, ST/T wave changes, and interval measurements require physician interpretation. Compare with prior ECGs if available.',
-      key_findings: ['Cardiac rhythm documented', 'ECG tracing recorded', 'Heart rate assessment pending'],
-      abnormal_values: [],
+      patient_summary: 'Your ECG (heart tracing) report has been uploaded and is ready for your doctor\'s review. The ECG records the electrical activity of your heart and your cardiologist will interpret the findings.',
+      doctor_summary: 'ECG tracing received. Rhythm analysis, axis, ST/T wave changes, and interval measurements require physician interpretation. Compare with prior ECGs if available.',
+      key_findings: ['Cardiac rhythm documented', 'ECG tracing recorded', 'Physician interpretation required'],
     },
     xray: {
-      patient_summary: 'Your X-ray images have been uploaded successfully. X-rays provide detailed images of your bones and some soft tissues. Your doctor will review and interpret the images.',
-      doctor_summary: 'Radiograph received. Systematic review of bony structures, soft tissues, and any pathological findings required. Clinical correlation with patient symptoms recommended.',
+      patient_summary: 'Your X-ray images have been uploaded successfully. X-rays provide images of your bones and some soft tissues. Your doctor will review and interpret the images.',
+      doctor_summary: 'Radiograph received. Systematic review of bony structures, soft tissues, and pathological findings required. Clinical correlation with patient symptoms recommended.',
       key_findings: ['Radiographic study received', 'Images uploaded for review', 'Radiological assessment pending'],
-      abnormal_values: [],
     },
     mri: {
-      patient_summary: 'Your MRI scan has been uploaded. MRI provides detailed images of your internal organs and tissues without radiation. A specialist radiologist will review the images and report findings to your doctor.',
-      doctor_summary: 'MRI study received. Detailed sequence review including T1/T2 weighted images required. Specialist radiological interpretation recommended before clinical decision-making.',
+      patient_summary: 'Your MRI scan has been uploaded. MRI provides detailed images of your internal organs and tissues. A radiologist will review the images and report findings to your doctor.',
+      doctor_summary: 'MRI study received. Detailed sequence review required. Specialist radiological interpretation recommended before clinical decision-making.',
       key_findings: ['MRI study received', 'Multi-sequence imaging documented', 'Radiologist review required'],
-      abnormal_values: [],
     },
   };
 
   const defaults = {
-    patient_summary: `Your ${type} report has been successfully uploaded and processed. Your healthcare provider will review the findings and discuss them with you at your next appointment. If you have any urgent concerns, please contact your doctor's office directly.`,
-    doctor_summary: `Medical report (${type}) received and catalogued. File: ${report.file_name}. Clinical interpretation and correlation with patient presentation required. Review in context of patient's complete medical history.`,
-    key_findings: ['Report uploaded successfully', 'Document ready for physician review', 'Clinical correlation recommended'],
-    abnormal_values: [],
+    patient_summary: `Your ${type} report has been uploaded and processed. Your healthcare provider will review the findings and discuss them with you at your next appointment. If you have any urgent concerns, please contact your doctor directly.`,
+    doctor_summary: `Medical report (${type}) received. File: ${report.file_name}. Clinical interpretation and correlation with patient presentation required.`,
+    key_findings: ['Report uploaded successfully', 'Document ready for physician review'],
   };
 
-  const data = typeMap[type] || defaults;
+  const data = { ...defaults, ...(typeMap[type] || {}) };
 
   if (mode === 'patient') return data.patient_summary;
   if (mode === 'doctor') return data.doctor_summary;
@@ -241,7 +381,7 @@ function generateReportFallback(report, mode) {
     patient_summary: data.patient_summary,
     doctor_summary: data.doctor_summary,
     key_findings: data.key_findings,
-    abnormal_values: data.abnormal_values,
+    abnormal_values: [],
     is_critical: false,
     emergency_reason: null,
     recommendations: 'Discuss report findings with your healthcare provider at your next scheduled appointment.',
@@ -267,9 +407,9 @@ Return ONLY valid JSON matching the response schema.`;
       temperature: 0.4,
     });
 
-    if (typeof raw === 'object') return raw;
-
-    const jsonMatch = raw.match(/\{[\s\S]+\}/);
+    if (typeof raw === 'object' && raw !== null) return raw;
+    const str = typeof raw === 'string' ? raw : '';
+    const jsonMatch = str.match(/\{[\s\S]+\}/);
     if (jsonMatch) return JSON.parse(jsonMatch[0]);
     return { suggested_department: 'General Medicine', urgency: 'routine', message: raw };
   } catch (e) {
@@ -296,17 +436,16 @@ async function calculateHealthScore(patientId) {
     ]);
 
     let baseScore = patRes.rows[0]?.health_score || 75;
-
-    // Adjust based on recent reports
     let reportAdjustment = 0;
+
     for (const r of reportRes.rows) {
       if (r.is_critical) reportAdjustment -= 8;
-      if (r.health_score_impact) reportAdjustment += r.health_score_impact;
-      const abnormals = Array.isArray(r.abnormal_values) ? r.abnormal_values.length : 0;
+      if (typeof r.health_score_impact === 'number') reportAdjustment += r.health_score_impact;
+      const abnormals = Array.isArray(r.abnormal_values) ? r.abnormal_values.length :
+        (typeof r.abnormal_values === 'string' ? JSON.parse(r.abnormal_values || '[]').length : 0);
       reportAdjustment -= abnormals * 2;
     }
 
-    // Adjust based on appointments
     let apptAdjustment = 0;
     for (const a of apptRes.rows) {
       if (a.status === 'completed') apptAdjustment += 1;
@@ -315,10 +454,7 @@ async function calculateHealthScore(patientId) {
 
     const computed = Math.min(100, Math.max(30, baseScore + reportAdjustment + apptAdjustment));
     const rounded = Math.round(computed);
-
-    // Update the stored health score
     await query(`UPDATE patients SET health_score=$1, updated_at=NOW() WHERE id=$2`, [rounded, patientId]);
-
     return { health_score: rounded, computed: true };
   } catch (e) {
     console.error('Health score calc error:', e.message);
@@ -329,8 +465,8 @@ async function calculateHealthScore(patientId) {
 /* ── EMR Generator Agent ── */
 async function generateEMR({ notes, patientId, doctorId }) {
   const systemPrompt = getSystemPrompt('emr_generator');
-
   let patientContext = '';
+
   if (patientId) {
     try {
       const pRes = await query(`
@@ -340,7 +476,7 @@ async function generateEMR({ notes, patientId, doctorId }) {
         const p = pRes.rows[0];
         patientContext = `Patient: ${p.first_name} ${p.last_name}, Blood Group: ${p.blood_group || 'unknown'}, Allergies: ${p.allergies || 'none'}`;
       }
-    } catch (e) {}
+    } catch (e) { /* non-fatal */ }
   }
 
   const userMessage = `Generate a structured EMR from these doctor notes:
@@ -348,7 +484,7 @@ async function generateEMR({ notes, patientId, doctorId }) {
 ${patientContext ? `[Patient Info]\n${patientContext}\n\n` : ''}[Doctor Notes/Dictation]
 ${notes}
 
-Return structured JSON EMR with subjective, objective, assessment, plan, diagnoses array, prescriptions array (name, dose, frequency, duration), and follow_up_date fields.`;
+Return structured JSON EMR with: subjective, objective, assessment, plan, diagnoses (array), prescriptions (array of {name, dose, frequency, duration}), and follow_up_date fields.`;
 
   try {
     const raw = await callAI(systemPrompt, userMessage, {
@@ -357,8 +493,9 @@ Return structured JSON EMR with subjective, objective, assessment, plan, diagnos
       temperature: 0.3,
     });
 
-    if (typeof raw === 'object') return raw;
-    const jsonMatch = raw.match(/\{[\s\S]+\}/);
+    if (typeof raw === 'object' && raw !== null) return raw;
+    const str = typeof raw === 'string' ? raw : '';
+    const jsonMatch = str.match(/\{[\s\S]+\}/);
     if (jsonMatch) return JSON.parse(jsonMatch[0]);
     return { structured_notes: raw, requires_review: true };
   } catch (e) {

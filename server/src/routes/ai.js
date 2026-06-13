@@ -196,17 +196,19 @@ router.post('/analyze-report/:report_id', authenticate, async (req, res) => {
         );
         for (const d of doctorRes.rows) {
           await query(
-            `INSERT INTO notifications (user_id, type, title, message, related_id, related_type)
-             SELECT u.id, 'critical_report', 'CRITICAL: Report Alert',
-               $1, $2, 'report'
+            `INSERT INTO notifications (user_id, type, title, message)
+             SELECT u.id, 'critical_report',
+               'CRITICAL: Report Alert — Immediate Review Required',
+               $1
              FROM doctors doc JOIN users u ON u.id=doc.user_id
-             WHERE doc.id=$3`,
+             WHERE doc.id=$2`,
             [
               `🚨 Critical values detected in patient report "${report.file_name}". ${analysis.emergency_reason || 'Immediate clinical review required.'}`,
-              report_id,
               d.doctor_id,
             ]
-          ).catch(() => {}); // non-fatal if notifications table doesn't support this schema
+          ).catch(notifErr => {
+            console.error('Emergency notification insert error:', notifErr.message);
+          });
         }
 
         // Also update the report with a critical flag note
