@@ -76,7 +76,7 @@ router.get('/revenue', authenticate, requireRole('admin'), async (req, res) => {
 router.get('/doctor-utilization', authenticate, requireRole('admin'), async (req, res) => {
   try {
     const result = await query(
-      `SELECT u.name, d.specialization, dep.name as department,
+      `SELECT u.name, d.specialization, dep.name as department, d.available,
               COUNT(a.id) as total_appointments,
               COUNT(CASE WHEN a.status='completed' THEN 1 END) as completed,
               COUNT(CASE WHEN a.status='cancelled' THEN 1 END) as cancelled,
@@ -86,7 +86,7 @@ router.get('/doctor-utilization', authenticate, requireRole('admin'), async (req
        LEFT JOIN departments dep ON d.department_id = dep.id
        LEFT JOIN appointments a ON a.doctor_id = d.id
        LEFT JOIN payments p ON p.appointment_id = a.id AND p.status='completed'
-       GROUP BY d.id, u.name, d.specialization, dep.name
+       GROUP BY d.id, u.name, d.specialization, dep.name, d.available
        ORDER BY total_appointments DESC`
     );
     res.json(result.rows);
