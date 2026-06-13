@@ -1,0 +1,416 @@
+Build a production-ready AI-powered Hospital Management Platform called "MediAI Hospital Suite".
+
+IMPORTANT:
+
+* Use the existing frontend design already present in the project.
+* Keep the same color palette, background, typography, animations, loaders, preloader, spacing, and UI style.
+* Do NOT redesign the frontend.
+* Extend the existing design system for all new pages.
+* Create a modern responsive web application.
+
+TECH STACK:
+
+* Frontend: React + TypeScript + TailwindCSS
+* Backend: Node.js + Express
+* Database: PostgreSQL
+* Authentication: JWT + Role Based Access Control
+* File Storage: Cloudinary or S3 compatible storage
+* AI Integration: Multi-Agent Architecture using OpenAI compatible APIs
+* Charts: Recharts
+* State Management: Zustand
+
+====================================================
+MULTI AGENT AI SYSTEM
+=====================
+
+Create separate AI agents:
+
+1. Patient Assistant Agent
+2. Doctor Assistant Agent
+3. Admin Assistant Agent
+4. Report Analysis Agent
+5. EMR Generation Agent
+6. Appointment Scheduling Agent
+7. Hospital Analytics Agent
+
+Agents should communicate with each other through orchestrator workflows.
+
+====================================================
+PATIENT PORTAL
+==============
+
+Patient Registration:
+
+* Email login
+* Mobile OTP login
+* Google login
+* Profile creation
+
+Patient Dashboard:
+
+* Upcoming appointments
+* Past appointments
+* Medical history
+* Uploaded reports
+* AI health summary
+* Notifications
+
+Patient AI Agent Features:
+
+A. Appointment Booking
+
+* Natural language booking
+* Example:
+  "Book appointment with cardiologist tomorrow evening."
+* AI finds available doctors
+* Shows available slots
+* Books appointment automatically
+
+B. Report Upload & Explanation
+
+* Upload:
+  PDF
+  JPG
+  PNG
+  DICOM
+
+* AI analyzes report
+
+* Generates:
+  Simple explanation
+  Key findings
+  Abnormal values
+  Suggested questions for doctor
+
+* Show report insights in patient-friendly language
+
+C. Medical Timeline
+
+* Store all uploaded reports
+* Create health timeline
+
+D. Report Comparison
+
+* Compare current report with previous reports
+
+* Detect:
+  Improvement
+  Deterioration
+  Stable condition
+
+* Generate trend charts
+
+Example:
+"Hemoglobin increased from 10.2 to 12.1"
+"Cholesterol reduced by 18%"
+
+E. Health Progress Tracker
+
+* Visual charts
+* AI-generated progress summaries
+
+F. Medicine Reminder System
+
+* Daily reminders
+* Dose tracking
+
+G. Symptom Checker
+
+* AI symptom collection
+* Suggest department/specialist
+
+H. Voice Chat
+
+* Voice-to-text
+* AI conversation
+
+I. Multilingual Support
+
+* English
+* Hindi
+* Easily expandable
+
+====================================================
+DOCTOR PORTAL
+=============
+
+Doctor Login
+
+Doctor Dashboard:
+
+* Today's appointments
+* Upcoming appointments
+* Patient queue
+* Reports awaiting review
+* Revenue generated
+
+Doctor AI Agent Features:
+
+A. Daily Schedule Assistant
+
+Doctor can ask:
+
+* What appointments do I have today?
+* Show next patient.
+* Which patients uploaded reports?
+
+AI answers instantly.
+
+B. Patient Summary Generation
+
+Before appointment:
+Generate:
+
+* Past history
+* Previous visits
+* Medications
+* Report summary
+
+C. AI EMR Generator
+
+Doctor uploads:
+
+* Prescription
+* Notes
+* Voice recording
+
+AI automatically generates:
+
+* EMR record
+* Diagnosis
+* Treatment plan
+* Follow-up notes
+
+D. Voice Dictation
+
+Doctor speaks.
+AI converts to structured EMR.
+
+E. Prescription Drafting
+
+Generate draft prescriptions.
+
+F. Clinical Report Assistant
+
+Summarize large reports.
+
+G. Follow-Up Recommendation Engine
+
+AI suggests:
+
+* Follow-up dates
+* Tests needed
+* Monitoring requirements
+
+====================================================
+ADMIN PORTAL
+============
+
+Admin Login
+
+Admin Dashboard Cards:
+
+* Total Patients
+* Total Doctors
+* Today's Appointments
+* Monthly Revenue
+* Revenue Growth
+* Active Doctors
+* Report Upload Statistics
+
+Admin AI Agent Features:
+
+A. Business Analytics
+
+Admin can ask:
+
+* Show revenue this month.
+* Compare revenue with last month.
+* Which department performs best?
+* Appointment growth trends.
+
+B. Financial Insights
+
+Generate:
+
+* Profit trends
+* Revenue trends
+* Department-wise revenue
+
+C. Operational Insights
+
+Analyze:
+
+* Doctor utilization
+* Appointment cancellations
+* Peak hours
+
+D. Automated Reports
+
+Generate:
+
+* Weekly reports
+* Monthly reports
+* Quarterly reports
+
+Export PDF.
+
+E. AI Recommendations
+
+Suggest:
+
+* Staffing improvements
+* Revenue opportunities
+* Resource optimization
+
+====================================================
+APPOINTMENT SYSTEM
+==================
+
+Features:
+
+* Department management
+* Doctor schedules
+* Slot management
+* Appointment booking
+* Rescheduling
+* Cancellation
+* Waitlist management
+
+Statuses:
+
+* Booked
+* Confirmed
+* Completed
+* Cancelled
+
+====================================================
+REPORT MANAGEMENT
+=================
+
+Store all reports permanently.
+
+Features:
+
+* Secure upload
+* Version history
+* AI indexing
+* Search reports
+* Timeline view
+* Compare reports
+
+====================================================
+DATABASE DESIGN
+===============
+
+Create tables:
+
+Users
+Patients
+Doctors
+Admins
+Appointments
+Departments
+Reports
+EMRRecords
+Prescriptions
+MedicalHistory
+Notifications
+Payments
+RevenueAnalytics
+AIConversations
+VoiceTranscripts
+
+Include proper relationships.
+
+====================================================
+AI ANALYTICS ENGINE
+===================
+
+Generate:
+
+* Health trend graphs
+* Revenue graphs
+* Doctor performance graphs
+* Appointment growth charts
+
+====================================================
+SECURITY
+========
+
+Implement:
+
+* JWT authentication
+* RBAC
+* Encrypted report storage
+* Audit logs
+* HIPAA-inspired security practices
+* Rate limiting
+
+====================================================
+DASHBOARD UI
+============
+
+Maintain existing project styling.
+
+Create:
+
+Patient Dashboard
+Doctor Dashboard
+Admin Dashboard
+
+Use:
+
+* Cards
+* Charts
+* Tables
+* AI Chat Panels
+
+Keep design consistent with current frontend.
+
+====================================================
+EXTRA AI FEATURES
+=================
+
+1. Emergency Detection
+   If report contains critical values:
+
+* Highlight immediately
+* Notify patient and doctor
+
+2. Smart Follow-Up Prediction
+   AI predicts next visit date.
+
+3. Health Score
+   Generate patient health score.
+
+4. AI Medical Timeline
+   Visual history of patient health.
+
+5. Doctor Productivity Insights
+
+6. AI Revenue Forecasting
+
+7. Appointment No-Show Prediction
+
+8. AI Generated Executive Summary
+   for Admin Dashboard
+
+====================================================
+DELIVERABLES
+============
+
+Generate:
+
+1. Complete project structure
+2. Database schema
+3. API architecture
+4. Multi-agent workflow architecture
+5. Backend implementation
+6. Frontend pages
+7. AI integrations
+8. Dashboard components
+9. Authentication system
+10. Deployment-ready code
+
+Build the application incrementally while preserving existing UI and frontend design.
