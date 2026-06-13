@@ -43,6 +43,21 @@ router.get('/conversations', authenticate, async (req, res) => {
   }
 });
 
+// PUT /api/ai/conversations/:id — update a specific message (own only, e.g. edit context)
+router.put('/conversations/:id', authenticate, async (req, res) => {
+  try {
+    const { context } = req.body;
+    const result = await query(
+      `UPDATE ai_conversations SET context=$1 WHERE id=$2 AND user_id=$3 RETURNING *`,
+      [context ? JSON.stringify(context) : null, req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Message not found or not yours' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update message' });
+  }
+});
+
 // DELETE /api/ai/conversations — clear own conversation history
 router.delete('/conversations', authenticate, async (req, res) => {
   try {

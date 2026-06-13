@@ -24,10 +24,10 @@ CREATE TABLE IF NOT EXISTS departments (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Patients (extends users)
+-- Patients (extends users, 1:1 via UNIQUE user_id)
 CREATE TABLE IF NOT EXISTS patients (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   date_of_birth DATE,
   gender VARCHAR(20),
   blood_group VARCHAR(10),
@@ -39,10 +39,10 @@ CREATE TABLE IF NOT EXISTS patients (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Doctors (extends users)
+-- Doctors (extends users, 1:1 via UNIQUE user_id)
 CREATE TABLE IF NOT EXISTS doctors (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   specialization VARCHAR(255) NOT NULL DEFAULT 'General Medicine',
   license_number VARCHAR(100),
   department_id INTEGER REFERENCES departments(id),
@@ -55,10 +55,10 @@ CREATE TABLE IF NOT EXISTS doctors (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Admins (extends users)
+-- Admins (extends users, 1:1 via UNIQUE user_id)
 CREATE TABLE IF NOT EXISTS admins (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   permissions JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );

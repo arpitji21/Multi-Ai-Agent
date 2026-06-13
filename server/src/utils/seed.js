@@ -44,7 +44,7 @@ async function seed() {
     [adminHash]
   );
   const adminId = adminUser.rows[0].id;
-  await query(`INSERT INTO admins (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, [adminId]);
+  await query(`INSERT INTO admins (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, [adminId]);
   console.log('✅ Admin seeded: admin@mediai.com / admin123');
 
   // Seed demo doctor
@@ -61,7 +61,10 @@ async function seed() {
   const doctorProfile = await query(
     `INSERT INTO doctors (user_id, specialization, license_number, department_id, consultation_fee, rating, experience_years)
      VALUES ($1, 'Cardiology', 'LIC-2024-001', $2, 150.00, 4.8, 12)
-     ON CONFLICT DO NOTHING RETURNING id`,
+     ON CONFLICT (user_id) DO UPDATE SET
+       specialization=EXCLUDED.specialization,
+       license_number=EXCLUDED.license_number
+     RETURNING id`,
     [doctorUserId, cardDeptId]
   );
   console.log('✅ Doctor seeded: doctor@mediai.com / doctor123');
@@ -80,7 +83,9 @@ async function seed() {
   await query(
     `INSERT INTO doctors (user_id, specialization, license_number, department_id, consultation_fee, rating, experience_years)
      VALUES ($1, 'Neurology', 'LIC-2024-002', $2, 200.00, 4.9, 15)
-     ON CONFLICT DO NOTHING`,
+     ON CONFLICT (user_id) DO UPDATE SET
+       specialization=EXCLUDED.specialization,
+       license_number=EXCLUDED.license_number`,
     [doctor2UserId, neuroDeptId]
   );
   console.log('✅ Doctor 2 seeded: drchen@mediai.com / doctor123');
@@ -97,7 +102,8 @@ async function seed() {
   const patientProfile = await query(
     `INSERT INTO patients (user_id, date_of_birth, gender, blood_group, address, health_score)
      VALUES ($1, '1985-06-15', 'Male', 'O+', '123 Main St, Springfield', 82)
-     ON CONFLICT DO NOTHING RETURNING id`,
+     ON CONFLICT (user_id) DO UPDATE SET health_score=EXCLUDED.health_score
+     RETURNING id`,
     [patientUserId]
   );
   console.log('✅ Patient seeded: patient@mediai.com / patient123');

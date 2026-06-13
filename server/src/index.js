@@ -19,6 +19,7 @@ const paymentRoutes = require('./routes/payments');
 const aiRoutes = require('./routes/ai');
 const adminRoutes = require('./routes/admins');
 const revenueRoutes = require('./routes/revenue');
+const userRoutes = require('./routes/users');
 
 const { auditLog } = require('./middleware/audit');
 
@@ -78,6 +79,7 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/admins', adminRoutes);
 app.use('/api/revenue', revenueRoutes);
+app.use('/api/users', userRoutes);
 
 // Health check — public
 app.get('/api/health', (req, res) => {
