@@ -47,9 +47,24 @@ function ReportComparisonPanel({ reports, onClear }) {
   const dateA = rA?.created_at?.split('T')[0] || 'Report A';
   const dateB = rB?.created_at?.split('T')[0] || 'Report B';
 
+  // Derive a health index score from AI analysis: start at 100, subtract for abnormal values
+  function deriveScore(report) {
+    const base = report?.health_score ?? 70;
+    const abnormals = Array.isArray(report?.abnormal_values) ? report.abnormal_values.length : 0;
+    const findings = Array.isArray(report?.key_findings) ? report.key_findings.length : 0;
+    return Math.max(40, Math.min(100, base - abnormals * 5 + Math.min(findings, 3)));
+  }
+
+  const scoreA = deriveScore(rA);
+  const scoreB = deriveScore(rB);
+  const abnormalCountA = Array.isArray(rA?.abnormal_values) ? rA.abnormal_values.length : 0;
+  const abnormalCountB = Array.isArray(rB?.abnormal_values) ? rB.abnormal_values.length : 0;
+  const findingsCountA = Array.isArray(rA?.key_findings) ? rA.key_findings.length : 0;
+  const findingsCountB = Array.isArray(rB?.key_findings) ? rB.key_findings.length : 0;
+
   const trendData = [
-    { name: dateA, reportA: 65, reportB: null },
-    { name: dateB, reportA: null, reportB: 72 },
+    { name: dateA, 'Health Index': scoreA, 'Abnormal Flags': abnormalCountA, 'Findings': findingsCountA },
+    { name: dateB, 'Health Index': scoreB, 'Abnormal Flags': abnormalCountB, 'Findings': findingsCountB },
   ];
 
   return (
@@ -83,23 +98,43 @@ function ReportComparisonPanel({ reports, onClear }) {
         ))}
       </div>
 
-      <div className="h-32">
+      {/* Metrics summary row */}
+      <div className="grid grid-cols-3 gap-2 text-center">
+        {[
+          { label: 'Health Index', a: scoreA, b: scoreB, unit: '', higher: true },
+          { label: 'Abnormal Flags', a: abnormalCountA, b: abnormalCountB, unit: '', higher: false },
+          { label: 'Key Findings', a: findingsCountA, b: findingsCountB, unit: '', higher: null },
+        ].map(m => {
+          const improved = m.higher !== null ? (m.higher ? m.b > m.a : m.b < m.a) : null;
+          return (
+            <div key={m.label} className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-2">
+              <p className="text-[10px] text-zinc-500 mb-1">{m.label}</p>
+              <div className="flex items-center justify-center gap-2 text-xs">
+                <span className="text-blue-400 font-semibold">{m.a}{m.unit}</span>
+                <span className="text-zinc-600">→</span>
+                <span className={`font-semibold ${improved === true ? 'text-emerald-400' : improved === false ? 'text-rose-400' : 'text-zinc-300'}`}>
+                  {m.b}{m.unit}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="h-36">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={[
-            { label: dateA, A: 65, B: null },
-            { label: 'Mid', A: 68, B: 68 },
-            { label: dateB, A: null, B: 72 },
-          ]}>
+          <LineChart data={trendData}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-            <XAxis dataKey="label" tick={{ fill: '#71717a', fontSize: 10 }} />
-            <YAxis domain={[50, 100]} tick={{ fill: '#71717a', fontSize: 10 }} />
+            <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 10 }} />
+            <YAxis domain={[0, 100]} tick={{ fill: '#71717a', fontSize: 10 }} />
             <Tooltip
               contentStyle={{ background: '#18181b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '12px' }}
               labelStyle={{ color: '#a1a1aa' }}
             />
             <Legend wrapperStyle={{ fontSize: '11px', color: '#a1a1aa' }} />
-            <Line type="monotone" dataKey="A" name="Report A" stroke="#60a5fa" strokeWidth={2} dot={{ fill: '#60a5fa', r: 4 }} connectNulls />
-            <Line type="monotone" dataKey="B" name="Report B" stroke="#34d399" strokeWidth={2} dot={{ fill: '#34d399', r: 4 }} connectNulls />
+            <Line type="monotone" dataKey="Health Index" stroke="#a78bfa" strokeWidth={2} dot={{ fill: '#a78bfa', r: 5 }} />
+            <Line type="monotone" dataKey="Abnormal Flags" stroke="#f87171" strokeWidth={2} dot={{ fill: '#f87171', r: 5 }} />
+            <Line type="monotone" dataKey="Findings" stroke="#60a5fa" strokeWidth={2} dot={{ fill: '#60a5fa', r: 5 }} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -481,6 +516,8 @@ const CHART_TOOLTIP_STYLE = {
 
 function ProgressTab() {
   const [patient, setPatient] = useState(null);
+  const [aiInsight, setAiInsight] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
 
   useEffect(() => {
     api.get('/patients').then(r => {
@@ -488,6 +525,21 @@ function ProgressTab() {
       setPatient(p);
     }).catch(() => {});
   }, []);
+
+  async function getAiInsight(score, patient) {
+    setAiLoading(true);
+    try {
+      const res = await api.post('/ai/chat', {
+        message: `My current health score is ${score}/100. Blood group: ${patient?.blood_group || 'unknown'}. Gender: ${patient?.gender || 'unknown'}. Allergies: ${patient?.allergies || 'none'}. Give me a brief (3–4 sentences) personalized health progress insight and one actionable tip to improve my score.`,
+        context: { type: 'health_progress' },
+      });
+      setAiInsight(res.data.reply);
+    } catch (e) {
+      setAiInsight('AI insight temporarily unavailable. Please try again shortly.');
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   const score = patient?.health_score ?? 75;
   const scoreColor = score >= 80 ? '#34d399' : score >= 60 ? '#fbbf24' : '#f87171';
@@ -531,8 +583,35 @@ function ProgressTab() {
               </span>
             )}
           </div>
+          <button
+            onClick={() => getAiInsight(score, patient)}
+            disabled={aiLoading}
+            className="mt-3 btn-primary btn-sm"
+          >
+            {aiLoading ? (
+              <span className="flex items-center gap-1.5">
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                Analyzing…
+              </span>
+            ) : (
+              <><Brain size={14} /> AI Progress Insight</>
+            )}
+          </button>
         </div>
       </div>
+
+      {/* AI Progress Insight */}
+      {aiInsight && (
+        <div className="glass-card border-violet-500/20 bg-violet-500/[0.04] p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-500/20">
+              <Brain size={16} className="text-violet-400" />
+            </div>
+            <p className="text-sm font-semibold text-zinc-200">AI Health Progress Insight</p>
+          </div>
+          <p className="text-sm leading-relaxed text-zinc-300">{aiInsight}</p>
+        </div>
+      )}
 
       {/* Health Score trend */}
       <div className="glass-card p-5">
@@ -716,6 +795,57 @@ function MedicinesTab() {
             <button onClick={save} disabled={saving || !form.medication_name} className="btn-primary btn-sm">
               {saving ? 'Saving…' : <><Check size={14} /> Save</>}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Daily Schedule View */}
+      {!loading && medicines.length > 0 && (
+        <div className="glass-soft p-5">
+          <h4 className="section-title mb-4 flex items-center gap-2 text-sm">
+            <Clock size={14} className="text-brand-400" /> Today's Schedule
+          </h4>
+          <div className="space-y-2">
+            {(() => {
+              const slots = [
+                { time: '08:00 AM', label: 'Morning', icon: '🌅' },
+                { time: '02:00 PM', label: 'Afternoon', icon: '☀️' },
+                { time: '08:00 PM', label: 'Evening', icon: '🌙' },
+              ];
+              const freqToSlots = freq => {
+                const f = (freq || '').toLowerCase();
+                if (f.includes('three') || f.includes('3')) return [0, 1, 2];
+                if (f.includes('twice') || f.includes('two') || f.includes('2') || f.includes('bid')) return [0, 2];
+                if (f.includes('weekly')) return null;
+                return [0];
+              };
+              return slots.map((slot, si) => {
+                const meds = medicines.filter(m => {
+                  const indices = freqToSlots(m.frequency);
+                  return indices && indices.includes(si);
+                });
+                return (
+                  <div key={slot.time} className={`flex items-start gap-3 rounded-xl border p-3 ${meds.length > 0 ? 'border-brand-500/20 bg-brand-500/[0.03]' : 'border-white/[0.05] opacity-50'}`}>
+                    <div className="w-28 shrink-0">
+                      <p className="text-xs font-semibold text-zinc-300">{slot.icon} {slot.time}</p>
+                      <p className="text-[10px] text-zinc-500">{slot.label}</p>
+                    </div>
+                    {meds.length === 0 ? (
+                      <p className="text-xs text-zinc-600 pt-0.5">No medications</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {meds.map(m => (
+                          <div key={m.id} className="rounded-lg border border-brand-500/20 bg-brand-500/10 px-2.5 py-1">
+                            <p className="text-xs font-medium text-zinc-200">{m.medication_name}</p>
+                            {m.dosage && <p className="text-[10px] text-zinc-500">{m.dosage}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              });
+            })()}
           </div>
         </div>
       )}
