@@ -113,14 +113,6 @@ export default function Login() {
                     placeholder="+1-555-0100"
                   />
                 </div>
-                <div>
-                  <label className="field-label">Role</label>
-                  <select name="role" value={form.role} onChange={handleChange} className="input">
-                    <option value="patient">Patient</option>
-                    <option value="doctor">Doctor</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
               </>
             )}
 

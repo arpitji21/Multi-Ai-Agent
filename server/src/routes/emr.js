@@ -148,4 +148,44 @@ router.get('/:id', authenticate, async (req, res) => {
   }
 });
 
+// PUT /api/emr/:id — doctor who created it or admin
+router.put('/:id', authenticate, requireRole('doctor', 'admin'), async (req, res) => {
+  try {
+    const check = await query(`SELECT doctor_id FROM emr_records WHERE id=$1`, [req.params.id]);
+    if (check.rows.length === 0) return res.status(404).json({ error: 'EMR not found' });
+    if (req.user.role === 'doctor') {
+      const docId = await getOwnDoctorId(req.user.id);
+      if (check.rows[0].doctor_id !== docId) return res.status(403).json({ error: 'Forbidden' });
+    }
+    const { diagnosis, treatment_plan, prescription, follow_up_date, notes, vital_signs } = req.body;
+    const result = await query(
+      `UPDATE emr_records SET
+         diagnosis=COALESCE($1,diagnosis),
+         treatment_plan=COALESCE($2,treatment_plan),
+         prescription=COALESCE($3,prescription),
+         follow_up_date=COALESCE($4,follow_up_date),
+         notes=COALESCE($5,notes),
+         vital_signs=COALESCE($6::jsonb,vital_signs),
+         updated_at=NOW()
+       WHERE id=$7 RETURNING *`,
+      [diagnosis||null, treatment_plan||null, prescription||null, follow_up_date||null,
+       notes||null, vital_signs ? JSON.stringify(vital_signs) : null, req.params.id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update EMR' });
+  }
+});
+
+// DELETE /api/emr/:id — admin only
+router.delete('/:id', authenticate, requireRole('admin'), async (req, res) => {
+  try {
+    const result = await query(`DELETE FROM emr_records WHERE id=$1 RETURNING id`, [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'EMR not found' });
+    res.json({ message: 'EMR deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete EMR' });
+  }
+});
+
 module.exports = router;

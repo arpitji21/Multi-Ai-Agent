@@ -201,6 +201,41 @@ router.get('/:id/medicine-reminders', authenticate, async (req, res) => {
   }
 });
 
+// DELETE /api/patients/:id/medical-history/:hid — doctor or admin
+router.delete('/:id/medical-history/:hid', authenticate, requireRole('doctor', 'admin'), async (req, res) => {
+  try {
+    const result = await query(
+      `DELETE FROM medical_history WHERE id=$1 AND patient_id=$2 RETURNING id`,
+      [req.params.hid, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Medical history entry not found' });
+    res.json({ message: 'Medical history entry deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete medical history' });
+  }
+});
+
+// PUT /api/patients/:id/medical-history/:hid — doctor or admin
+router.put('/:id/medical-history/:hid', authenticate, requireRole('doctor', 'admin'), async (req, res) => {
+  try {
+    const { condition, diagnosis, treatment, date, notes } = req.body;
+    const result = await query(
+      `UPDATE medical_history SET
+         condition=COALESCE($1,condition),
+         diagnosis=COALESCE($2,diagnosis),
+         treatment=COALESCE($3,treatment),
+         date=COALESCE($4,date),
+         notes=COALESCE($5,notes)
+       WHERE id=$6 AND patient_id=$7 RETURNING *`,
+      [condition||null, diagnosis||null, treatment||null, date||null, notes||null, req.params.hid, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Medical history entry not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update medical history' });
+  }
+});
+
 // POST /api/patients/:id/medicine-reminders — own record or doctor
 router.post('/:id/medicine-reminders', authenticate, async (req, res) => {
   try {
@@ -216,6 +251,51 @@ router.post('/:id/medicine-reminders', authenticate, async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to add reminder' });
+  }
+});
+
+// PUT /api/patients/:id/medicine-reminders/:rid — own record or doctor
+router.put('/:id/medicine-reminders/:rid', authenticate, async (req, res) => {
+  try {
+    if (req.user.role === 'admin') return res.status(403).json({ error: 'Forbidden' });
+    const allowed = await ownOrStaff(req, res, req.params.id);
+    if (!allowed) return;
+    const { medication_name, dosage, frequency, start_date, end_date, reminder_active, instructions } = req.body;
+    const result = await query(
+      `UPDATE prescriptions SET
+         medication_name=COALESCE($1,medication_name),
+         dosage=COALESCE($2,dosage),
+         frequency=COALESCE($3,frequency),
+         start_date=COALESCE($4,start_date),
+         end_date=COALESCE($5,end_date),
+         reminder_active=COALESCE($6,reminder_active),
+         instructions=COALESCE($7,instructions),
+         updated_at=NOW()
+       WHERE id=$8 AND patient_id=$9 RETURNING *`,
+      [medication_name||null, dosage||null, frequency||null, start_date||null,
+       end_date||null, reminder_active??null, instructions||null, req.params.rid, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Prescription not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update reminder' });
+  }
+});
+
+// DELETE /api/patients/:id/medicine-reminders/:rid — own record or doctor
+router.delete('/:id/medicine-reminders/:rid', authenticate, async (req, res) => {
+  try {
+    if (req.user.role === 'admin') return res.status(403).json({ error: 'Forbidden' });
+    const allowed = await ownOrStaff(req, res, req.params.id);
+    if (!allowed) return;
+    const result = await query(
+      `DELETE FROM prescriptions WHERE id=$1 AND patient_id=$2 RETURNING id`,
+      [req.params.rid, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Prescription not found' });
+    res.json({ message: 'Prescription deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete reminder' });
   }
 });
 
