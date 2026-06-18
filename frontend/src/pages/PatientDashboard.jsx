@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Upload, FileText, Brain, CheckCircle2, History, Activity,
   Pill, AlertCircle, TrendingUp, Zap, Plus, Trash2, Edit2,
-  Check, X, Clock, Calendar, ChevronDown, BarChart2
+  Check, X, Clock, Calendar, ChevronDown, BarChart2, ClipboardList
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -13,6 +13,7 @@ import useAuthStore from '../store/authStore';
 
 const TABS = [
   { id: 'reports', label: 'Reports & AI', icon: Brain },
+  { id: 'clinical', label: 'Clinical Records', icon: ClipboardList },
   { id: 'timeline', label: 'Timeline', icon: History },
   { id: 'progress', label: 'Health Progress', icon: TrendingUp },
   { id: 'medicines', label: 'Medicines', icon: Pill },
@@ -199,14 +200,9 @@ function ReportsTab() {
     const form = new FormData();
     form.append('file', file);
     try {
-      const uploadRes = await api.post('/reports/upload', form, {
+      await api.post('/reports/upload', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      const reportId = uploadRes.data?.id;
-      if (reportId) {
-        const aiRes = await api.post(`/ai/analyze-report/${reportId}`);
-        setAnalysis(aiRes.data);
-      }
       setFile(null);
       if (fileRef.current) fileRef.current.value = '';
       await fetchReports();
@@ -214,16 +210,6 @@ function ReportsTab() {
       setError(e.response?.data?.error || 'Upload failed. Please try again.');
     } finally {
       setUploading(false);
-    }
-  }
-
-  async function viewAnalysis(reportId) {
-    try {
-      const res = await api.post(`/ai/analyze-report/${reportId}`);
-      setAnalysis(res.data);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    } catch (e) {
-      setError('Failed to load analysis.');
     }
   }
 
@@ -240,15 +226,15 @@ function ReportsTab() {
       {/* Upload card */}
       <div className="glass-card p-6 relative overflow-hidden">
         <div className="pointer-events-none absolute right-4 top-4 opacity-[0.06]">
-          <Brain size={100} />
+          <FileText size={100} />
         </div>
         <div className="mb-5 flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500/20 text-brand-500">
             <Upload size={20} />
           </div>
           <div>
-            <h3 className="font-bold text-white">Upload Report</h3>
-            <p className="text-xs text-zinc-400">PDF, JPG, PNG — AI analysis included</p>
+            <h3 className="font-bold text-white">Upload Medical Report</h3>
+            <p className="text-xs text-zinc-400">PDF, JPG, PNG — Uploaded reports will be visible to your doctor</p>
           </div>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -270,10 +256,10 @@ function ReportsTab() {
             {uploading ? (
               <span className="flex items-center gap-1.5">
                 <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                Analyzing…
+                Uploading…
               </span>
             ) : (
-              <><Brain size={16} /> Analyze Now</>
+              <><Upload size={16} /> Upload Now</>
             )}
           </button>
         </div>
@@ -284,70 +270,12 @@ function ReportsTab() {
         )}
       </div>
 
-      {/* AI Analysis Result */}
-      {analysis && (
-        <div className="glass-card border-brand-500/30 bg-brand-500/[0.04] p-6 space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-500 shadow-lg shadow-brand-500/30">
-              <CheckCircle2 size={20} className="text-white" />
-            </div>
-            <h3 className="text-lg font-bold text-white">AI Analysis Complete</h3>
-          </div>
-
-          <div className="rounded-xl bg-white/[0.04] border border-white/10 p-4">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-brand-400">
-              Patient Summary
-            </p>
-            <p className="text-sm leading-relaxed text-zinc-200">{analysis.patient_summary}</p>
-          </div>
-
-          <div className="rounded-xl border-l-2 border-white/10 pl-4">
-            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500">
-              Clinical Notes
-            </p>
-            <p className="text-sm italic text-zinc-400">{analysis.doctor_summary}</p>
-          </div>
-
-          {Array.isArray(analysis.key_findings) && analysis.key_findings.length > 0 && (
-            <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">Key Findings</p>
-              <div className="flex flex-wrap gap-2">
-                {analysis.key_findings.map((f, i) => (
-                  <span key={i} className="badge bg-white/5 border-white/10 text-zinc-300">{f}</span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {Array.isArray(analysis.abnormal_values) && analysis.abnormal_values.length > 0 && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
-              <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-400">
-                <AlertCircle size={12} /> Abnormal Values
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {analysis.abnormal_values.map((v, i) => (
-                  <span key={i} className="badge border-amber-500/30 bg-amber-500/10 text-amber-300">{v}</span>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Report comparison */}
-      {comparing.length === 2 && (
-        <ReportComparisonPanel reports={compareReports} onClear={() => setComparing([])} />
-      )}
-
       {/* Report list */}
       <div className="glass-soft p-5">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="section-title flex items-center gap-2 text-base">
-            <FileText size={16} className="text-zinc-500" /> Recent Reports
+            <FileText size={16} className="text-zinc-500" /> Uploaded Reports
           </h3>
-          {reports.length > 0 && (
-            <p className="text-xs text-zinc-500">Select 2 to compare</p>
-          )}
         </div>
         {loadingReports ? (
           <div className="space-y-2">
@@ -363,28 +291,29 @@ function ReportsTab() {
             {reports.map(r => (
               <div
                 key={r.id}
-                className={`flex items-center justify-between rounded-xl border p-3.5 transition cursor-pointer ${
-                  comparing.includes(r.id)
-                    ? 'border-violet-500/50 bg-violet-500/10'
-                    : 'border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06]'
-                }`}
-                onClick={() => toggleCompare(r.id)}
+                className="flex items-center justify-between rounded-xl border border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06] p-3.5 transition"
               >
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10">
                     <FileText size={16} className="text-brand-400" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-zinc-200 truncate max-w-[200px]">{r.file_name}</p>
+                    <p className="text-sm font-medium text-zinc-200 truncate max-w-[300px]">{r.file_name}</p>
                     <p className="text-xs text-zinc-500">{r.report_type} · {r.created_at?.split('T')[0]}</p>
                   </div>
                 </div>
-                <button
-                  onClick={e => { e.stopPropagation(); viewAnalysis(r.id); }}
-                  className="shrink-0 rounded-lg border border-brand-500/30 px-3 py-1.5 text-xs font-semibold text-brand-400 hover:bg-brand-500/10 transition"
-                >
-                  View AI
-                </button>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/uploads/${r.file_path}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    download
+                    className="shrink-0 rounded-lg border border-white/10 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-white/10 transition"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    View File
+                  </a>
+                </div>
               </div>
             ))}
           </div>
@@ -393,6 +322,106 @@ function ReportsTab() {
     </div>
   );
 }
+
+// ─── Clinical Records (EMR) ──────────────────────────────────────────────────
+function ClinicalRecordsTab() {
+  const [emrs, setEmrs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadEMRs() {
+      try {
+        setLoading(true);
+  
+        // Get current patient
+        const patientRes = await api.get('/patients');
+  
+        const patient = Array.isArray(patientRes.data)
+          ? patientRes.data[0]
+          : patientRes.data;
+  
+        if (!patient?.id) {
+          setLoading(false);
+          return;
+        }
+  
+        const emrRes = await api.get(`/emr/patient/${patient.id}`);
+  
+        setEmrs(emrRes.data || []);
+      } catch (err) {
+        console.error('Failed to load EMRs:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+  
+    loadEMRs();
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="section-title flex items-center gap-2 text-base">
+          <ClipboardList size={16} className="text-zinc-500" /> My Clinical Records
+        </h3>
+      </div>
+
+      {loading ? (
+        <div className="space-y-3">
+          {[1, 2].map(i => <div key={i} className="shimmer-bar h-20 rounded-xl" />)}
+        </div>
+      ) : emrs.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 py-16 text-center">
+          <ClipboardList size={36} className="text-zinc-700" />
+          <p className="text-sm text-zinc-500">No clinical records found</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {emrs.map(e => (
+            <div key={e.id} className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
+                    <ClipboardList size={18} />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-zinc-100">{e.diagnosis || 'Clinical Consultation'}</p>
+                    <p className="text-xs text-zinc-500">
+                      Dr. {e.doctor_name || 'Hospital Staff'} · {e.created_at?.split('T')[0]}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      const res = await api.get(`/emr/${e.id}/pdf`);
+                      if (res.data.pdf_url) window.open(res.data.pdf_url, '_blank');
+                    } catch (err) {
+                      alert('Failed to load report PDF.');
+                    }
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-brand-500/30 bg-brand-500/10 px-3 py-1.5 text-xs font-bold text-brand-400 hover:bg-brand-500/20 transition"
+                >
+                  <FileText size={14} /> PDF Report
+                </button>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {e.treatment_plan && (
+                  <p className="text-xs text-zinc-400"><span className="text-zinc-500">Treatment:</span> {e.treatment_plan}</p>
+                )}
+                {e.prescription && (
+                  <p className="text-xs text-zinc-400"><span className="text-zinc-500">Prescription:</span> {e.prescription}</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+   
+  
 
 // ─── Medical Timeline ──────────────────────────────────────────────────────
 function TimelineTab() {
@@ -1161,6 +1190,7 @@ export default function PatientDashboard() {
       {/* Tab content */}
       <div className="min-h-[400px]">
         {activeTab === 'reports' && <ReportsTab />}
+        {activeTab === 'clinical' && <ClinicalRecordsTab />}
         {activeTab === 'timeline' && <TimelineTab />}
         {activeTab === 'progress' && <ProgressTab />}
         {activeTab === 'medicines' && <MedicinesTab />}
@@ -1169,3 +1199,64 @@ export default function PatientDashboard() {
     </div>
   );
 }
+// {urgency}
+//             </span>
+//           </div>
+//           <div className="flex gap-2">
+//             <a href="/appointments" className="btn-primary btn-sm">
+//               <Calendar size={14} /> Book Appointment
+//             </a>
+//             <button onClick={reset} className="btn-ghost btn-sm">Check Again</button>
+//           </div>
+//         </div>
+//       )}
+//     </div>
+//   );
+// }
+
+// // ─── Main My Health page ────────────────────────────────────────────────────
+// export default function PatientDashboard() {
+//   const [activeTab, setActiveTab] = useState('reports');
+
+//   return (
+//     <div className="animate-fade-in space-y-6">
+//       {/* Header */}
+//       <div>
+//         <h2 className="text-3xl font-bold text-white">
+//           My <span className="gradient-text">Health</span>
+//         </h2>
+//         <p className="mt-1 text-zinc-400">Reports, timeline, progress, medicines & symptom checker.</p>
+//       </div>
+
+//       {/* Tab bar */}
+//       <div className="flex overflow-x-auto gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 w-fit max-w-full">
+//         {TABS.map(t => {
+//           const Icon = t.icon;
+//           return (
+//             <button
+//               key={t.id}
+//               onClick={() => setActiveTab(t.id)}
+//               className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition whitespace-nowrap ${
+//                 activeTab === t.id
+//                   ? 'bg-white/15 text-white shadow-inner'
+//                   : 'text-zinc-400 hover:text-zinc-200'
+//               }`}
+//             >
+//               <Icon size={14} />
+//               {t.label}
+//             </button>
+//           );
+//         })}
+//       </div>
+
+//       {/* Tab content */}
+//       <div className="min-h-[400px]">
+//         {activeTab === 'reports' && <ReportsTab />}
+//         {activeTab === 'timeline' && <TimelineTab />}
+//         {activeTab === 'progress' && <ProgressTab />}
+//         {activeTab === 'medicines' && <MedicinesTab />}
+//         {activeTab === 'symptoms' && <SymptomsTab />}
+//       </div>
+//     </div>
+//   );
+// }

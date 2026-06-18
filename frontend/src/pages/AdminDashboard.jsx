@@ -250,14 +250,14 @@ function buildPeriodCSV(overview, trends, utilization, period) {
 }
 
 /* ── AI Chat Panel ── */
-function AIChatPanel({ analyticsContext }) {
+function AIChatPanel({ analyticsContext, trends, utilization }) {
   const [messages, setMessages] = useState([
-    { role: 'ai', text: "Hello! I'm your Admin Analytics AI. Ask me anything — 'Show revenue trends', 'Which department performs best?', 'What's the appointment cancellation rate?', or any hospital data question.", chart: null }
+    { role: 'ai', text: "Hello! I'm your Executive Analytics AI. I can analyze revenue trends, doctor performance, department utilization, and provide strategic hospital insights. How can I help you today?", chart: null }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const endRef = useRef(null);
-  const QUICK = ['Revenue this month', 'Top performing department', 'Appointment trends', 'Doctor utilization summary'];
+  const QUICK = ['Revenue growth analysis', 'Top performing doctors', 'Appointment completion trends', 'Operational anomalies'];
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -274,8 +274,16 @@ function AIChatPanel({ analyticsContext }) {
         context: {
           type: 'admin_analytics',
           stats: analyticsContext?.stats,
-          revenue_history: analyticsContext?.revenue_history?.slice(-6),
-          department_performance: analyticsContext?.department_performance?.slice(0, 5),
+          revenue_history: analyticsContext?.revenue_history,
+          department_performance: analyticsContext?.department_performance,
+          doctor_utilization: utilization?.map(u => ({
+            name: u.name,
+            appointments: u.total_appointments,
+            completed: u.completed,
+            cancelled: u.cancelled,
+            revenue: u.revenue
+          })),
+          appointment_trends: trends?.slice(-8), // Last 8 weeks
         },
       });
       setMessages(m => [...m, { role: 'ai', text: res.data.reply || 'No response from AI.', chart: chartPayload }]);
@@ -622,7 +630,11 @@ export default function AdminDashboard() {
       </div>
 
       {/* AI Analytics Chat */}
-      <AIChatPanel analyticsContext={overview} />
+      <AIChatPanel 
+        analyticsContext={overview} 
+        trends={trends} 
+        utilization={utilization} 
+      />
     </div>
   );
 }

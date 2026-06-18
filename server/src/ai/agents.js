@@ -343,8 +343,8 @@ Return ONLY valid JSON matching the schema in your instructions.`;
     }
 
     return {
-      patient_summary: parsed.patient_summary || generateReportFallback(report, 'patient'),
-      doctor_summary: parsed.doctor_summary || generateReportFallback(report, 'doctor'),
+      patient_summary: parsed.patient_summary || generateReportFallback(report, 'patient', fileContent),
+      doctor_summary: parsed.doctor_summary || generateReportFallback(report, 'doctor', fileContent),
       key_findings: Array.isArray(parsed.key_findings) ? parsed.key_findings : [],
       abnormal_values: Array.isArray(parsed.abnormal_values) ? parsed.abnormal_values : [],
       is_critical: Boolean(parsed.is_critical),
@@ -353,13 +353,91 @@ Return ONLY valid JSON matching the schema in your instructions.`;
       health_score_impact: typeof parsed.health_score_impact === 'number' ? parsed.health_score_impact : 0,
     };
   } catch (err) {
-    console.error('Report analysis parse error:', err.message);
-    return generateReportFallback(report, 'full');
+    console.error('Report analysis error:', err.message);
+    return generateReportFallback(report, 'full', fileContent);
   }
 }
 
-function generateReportFallback(report, mode) {
+/* ── Local Rule-Based Report Analysis (No API Key needed) ── */
+function analyzeTextLocally(text, reportType) {
+  const findings = [];
+  const abnormals = [];
+  let isCritical = false;
+  let patientSummary = "";
+  let doctorSummary = "";
+
+  const lowerText = text.toLowerCase();
+
+  // Define common markers and their meanings
+  const markers = [
+    { name: 'Hemoglobin', keys: ['hemoglobin', 'hgb', 'hb'], normal: [12, 17], unit: 'g/dL', info: 'Carries oxygen in blood.' },
+    { name: 'Glucose', keys: ['glucose', 'glu', 'sugar'], normal: [70, 100], unit: 'mg/dL', info: 'Blood sugar level.' },
+    { name: 'Cholesterol', keys: ['cholesterol', 'chol'], normal: [0, 200], unit: 'mg/dL', info: 'Fats in the blood.' },
+    { name: 'WBC', keys: ['wbc', 'white blood cell', 'leukocyte'], normal: [4000, 11000], unit: '/mcL', info: 'Immune system cells.' },
+    { name: 'Platelets', keys: ['platelets', 'plt'], normal: [150000, 450000], unit: '/mcL', info: 'Helps in blood clotting.' },
+    { name: 'Creatinine', keys: ['creatinine', 'creat'], normal: [0.7, 1.3], unit: 'mg/dL', info: 'Kidney function marker.' },
+    { name: 'Blood Pressure', keys: ['bp', 'blood pressure'], info: 'Force of blood against artery walls.' }
+  ];
+
+  markers.forEach(m => {
+    const found = m.keys.some(k => lowerText.includes(k));
+    if (found) {
+      findings.push(`${m.name} detected`);
+      
+      // Basic value extraction logic (simplified regex)
+      const regex = new RegExp(`(?:${m.keys.join('|')})\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)`, 'i');
+      const match = text.match(regex);
+      if (match) {
+        const val = parseFloat(match[1]);
+        if (m.normal) {
+          if (val < m.normal[0] || val > m.normal[1]) {
+            abnormals.push(`${m.name} is ${val} ${m.unit} (Normal: ${m.normal[0]}-${m.normal[1]})`);
+            if (val < m.normal[0] * 0.6 || val > m.normal[1] * 1.5) isCritical = true;
+          }
+        }
+      }
+    }
+  });
+
+  if (reportType === 'blood') {
+    patientSummary = "Your blood report shows markers like " + (findings.join(', ') || 'general indices') + ". ";
+    if (abnormals.length > 0) {
+      patientSummary += "Some values are outside the standard range. ";
+    } else {
+      patientSummary += "Most values appear to be within normal limits based on local analysis. ";
+    }
+    doctorSummary = "Automated local analysis of blood panel. Detected: " + findings.join('; ') + ". Flags: " + (abnormals.join('; ') || 'None') + ".";
+  } else if (reportType === 'ecg') {
+    patientSummary = "This heart tracing (ECG) has been recorded. It shows your heart's electrical activity.";
+    doctorSummary = "ECG study received. Local analysis detected rhythm data. Clinical correlation required.";
+    if (lowerText.includes('tachycardia')) { abnormals.push('Fast heart rate (Tachycardia)'); isCritical = true; }
+    if (lowerText.includes('bradycardia')) { abnormals.push('Slow heart rate (Bradycardia)'); }
+  } else {
+    patientSummary = "Your " + (reportType || 'medical') + " report has been processed. We've identified key markers for your doctor to review.";
+    doctorSummary = "General report analysis (" + reportType + "). Text extraction successful. Manual review recommended.";
+  }
+
+  return {
+    patient_summary: patientSummary,
+    doctor_summary: doctorSummary,
+    key_findings: findings,
+    abnormal_values: abnormals,
+    is_critical: isCritical,
+    recommendations: abnormals.length > 0 ? "Please schedule a consultation to discuss these results." : "Continue with your current health plan and discuss these results at your next visit."
+  };
+}
+
+function generateReportFallback(report, mode, textContent = "") {
   const type = (report.report_type || 'general').toLowerCase();
+
+  // If we have extracted text, use the rule-based engine
+  if (textContent && textContent.length > 50) {
+    const local = analyzeTextLocally(textContent, type);
+    if (mode === 'patient') return local.patient_summary;
+    if (mode === 'doctor') return local.doctor_summary;
+    return local;
+  }
+
   const typeMap = {
     blood: {
       patient_summary: 'Your blood test results have been received and reviewed. The report provides information about your blood cell counts, chemistry, and overall blood health. Please discuss the specific values with your doctor at your next appointment.',
@@ -486,11 +564,11 @@ async function generateEMR({ notes, patientId, doctorId }) {
   if (patientId) {
     try {
       const pRes = await query(`
-        SELECT p.*, u.email FROM patients p JOIN users u ON u.id=p.user_id WHERE p.id=$1
+        SELECT p.*, u.email, u.name FROM patients p JOIN users u ON u.id=p.user_id WHERE p.id=$1
       `, [patientId]);
       if (pRes.rows[0]) {
         const p = pRes.rows[0];
-        patientContext = `Patient: ${p.first_name} ${p.last_name}, Blood Group: ${p.blood_group || 'unknown'}, Allergies: ${p.allergies || 'none'}`;
+        patientContext = `Patient: ${p.name || 'Unknown'}, Blood Group: ${p.blood_group || 'unknown'}, Allergies: ${p.allergies || 'none'}`;
       }
     } catch (e) { /* non-fatal */ }
   }
@@ -500,7 +578,7 @@ async function generateEMR({ notes, patientId, doctorId }) {
 ${patientContext ? `[Patient Info]\n${patientContext}\n\n` : ''}[Doctor Notes/Dictation]
 ${notes}
 
-Return structured JSON EMR with: subjective, objective, assessment, plan, diagnoses (array), prescriptions (array of {name, dose, frequency, duration}), and follow_up_date fields.`;
+IMPORTANT: Return ONLY valid JSON matching the schema: { "subjective": "...", "objective": "...", "assessment": "...", "plan": "...", "diagnoses": ["..."], "prescriptions": ["..."], "follow_up_date": "YYYY-MM-DD" }`;
 
   try {
     const raw = await callAI(systemPrompt, userMessage, {
@@ -509,12 +587,31 @@ Return structured JSON EMR with: subjective, objective, assessment, plan, diagno
       temperature: 0.3,
     });
 
-    if (typeof raw === 'object' && raw !== null) return raw;
-    const str = typeof raw === 'string' ? raw : '';
-    const jsonMatch = str.match(/\{[\s\S]+\}/);
-    if (jsonMatch) return JSON.parse(jsonMatch[0]);
-    return { structured_notes: raw, requires_review: true };
+    let parsed;
+    if (typeof raw === 'object' && raw !== null) {
+      parsed = raw;
+    } else {
+      const str = typeof raw === 'string' ? raw : '';
+      const jsonMatch = str.match(/\{[\s\S]+\}/);
+      if (!jsonMatch) throw new Error('No JSON in response');
+      parsed = JSON.parse(jsonMatch[0]);
+    }
+
+    // Standardized field mapping for frontend compatibility
+    return {
+      subjective: parsed.subjective || "",
+      objective: parsed.objective || "",
+      assessment: parsed.assessment || "",
+      plan: parsed.plan || "",
+      diagnosis: parsed.diagnosis || (Array.isArray(parsed.diagnoses) ? parsed.diagnoses.join(", ") : (parsed.assessment || "")),
+      treatment_plan: parsed.treatment_plan || parsed.plan || "",
+      prescription: parsed.prescription || (Array.isArray(parsed.prescriptions) ? parsed.prescriptions.join(", ") : ""),
+      follow_up_date: parsed.follow_up_date || null,
+      diagnoses: Array.isArray(parsed.diagnoses) ? parsed.diagnoses : [],
+      prescriptions: Array.isArray(parsed.prescriptions) ? parsed.prescriptions : []
+    };
   } catch (e) {
+    console.error('EMR generation error:', e.message);
     return {
       subjective: notes,
       objective: 'To be completed by physician',
@@ -522,6 +619,10 @@ Return structured JSON EMR with: subjective, objective, assessment, plan, diagno
       plan: 'Treatment plan to be determined',
       diagnoses: [],
       prescriptions: [],
+      diagnosis: 'Requires review',
+      treatment_plan: 'Pending',
+      prescription: 'None',
+      follow_up_date: null,
       requires_review: true,
     };
   }

@@ -40,8 +40,6 @@ export default function DoctorPatientView() {
   const [reports, setReports] = useState([]);
   const [appointment, setAppointment] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [aiSummary, setAiSummary] = useState(null);
-  const [aiLoading, setAiLoading] = useState(false);
   const [tab, setTab] = useState('overview');
 
   useEffect(() => {
@@ -57,16 +55,13 @@ export default function DoctorPatientView() {
         api.get(`/patients/${patientId}/medicine-reminders`).catch(() => ({ data: [] })),
         api.get('/emr').catch(() => ({ data: [] })),
         api.get('/appointments').catch(() => ({ data: [] })),
-        api.get('/reports').catch(() => ({ data: [] })),
+        api.get(`/reports?patient_id=${patientId}`).catch(() => ({ data: [] })),
       ]);
       setPatient(patRes.data);
       setHistory(histRes.data || []);
       setReminders(remRes.data || []);
       setEmrs((emrRes.data || []).filter(e => e.patient_id === parseInt(patientId)));
-      // Filter reports to this patient by matching patient name or patient_id field
-      const allReports = rptRes.data || [];
-      const pid = parseInt(patientId);
-      setReports(allReports.filter(r => r.patient_id === pid));
+      setReports(rptRes.data || []);
       if (apptId) {
         const found = (apptRes.data || []).find(a => a.id === parseInt(apptId));
         setAppointment(found || null);
@@ -75,57 +70,6 @@ export default function DoctorPatientView() {
       console.error(err);
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function generateAiSummary() {
-    setAiLoading(true);
-    try {
-      const historyText = history.map(h => `${h.condition || h.diagnosis}: ${h.treatment}`).join('; ');
-      const medsText = reminders.map(r => `${r.medication_name} ${r.dosage || ''} (${r.frequency || ''})`).join(', ');
-      const lastEMR = emrs[0];
-      const reportsText = reports.length > 0
-        ? reports.map(r => {
-            const findings = r.doctor_summary || r.patient_summary || r.key_findings || null;
-            return `${r.report_type || 'Report'} (${r.created_at?.split('T')[0]}): ${findings || 'No AI analysis yet'}`;
-          }).join('\n')
-        : 'No prior reports on file';
-
-      const res = await api.post('/ai/chat', {
-        message: `Generate a concise pre-appointment clinical summary for patient ${patient?.name}.
-
-PATIENT DEMOGRAPHICS:
-Blood group: ${patient?.blood_group || 'Unknown'}
-Allergies: ${patient?.allergies || 'None known'}
-Health score: ${patient?.health_score || 'N/A'}
-
-MEDICAL HISTORY:
-${historyText || 'None on file'}
-
-CURRENT MEDICATIONS:
-${medsText || 'None on file'}
-
-PREVIOUS REPORTS:
-${reportsText}
-
-LAST EMR DIAGNOSIS:
-${lastEMR?.diagnosis || 'No previous EMR'} ${lastEMR?.treatment_plan ? `— Treatment: ${lastEMR.treatment_plan}` : ''}
-
-APPOINTMENT REASON: ${appointment?.reason || 'General consultation'}
-
-Provide a structured pre-appointment briefing covering:
-1. KEY CLINICAL POINTS: Most important facts for the doctor to know
-2. MEDICATION REVIEW: Current meds, potential interactions, refill needs
-3. PREVIOUS REPORT HIGHLIGHTS: Key findings from past reports
-4. AREAS TO ASSESS: What to focus on in today's consultation
-5. ALERTS: Any critical flags (allergies, abnormal values, urgent concerns)`,
-        context: { type: 'pre_appointment_summary', patient_id: patientId },
-      });
-      setAiSummary(res.data.reply);
-    } catch (err) {
-      setAiSummary('Unable to generate AI summary at this time. Please review patient records manually.');
-    } finally {
-      setAiLoading(false);
     }
   }
 
@@ -146,6 +90,7 @@ Provide a structured pre-appointment briefing covering:
     { id: 'overview', label: 'Overview', icon: User },
     { id: 'history', label: 'Medical History', icon: Stethoscope },
     { id: 'medications', label: 'Medications', icon: Pill },
+    { id: 'reports', label: 'Reports', icon: FileText },
     { id: 'emr', label: 'EMR Records', icon: ClipboardList },
   ];
 
@@ -201,72 +146,33 @@ Provide a structured pre-appointment briefing covering:
         </div>
       </div>
 
-      {/* AI Pre-Appointment Summary */}
-      <div className="glass-card p-6">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="section-title flex items-center gap-2">
-            <Brain className="h-5 w-5 text-violet-400" />
-            AI Pre-Appointment Summary
-          </h2>
-          {!aiSummary && (
-            <button
-              onClick={generateAiSummary}
-              disabled={aiLoading}
-              className="btn-primary btn-sm"
-            >
-              {aiLoading ? (
-                <span className="flex items-center gap-1.5">
-                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  Generating…
-                </span>
-              ) : (
-                <><Brain className="h-3.5 w-3.5" /> Generate Summary</>
-              )}
-            </button>
-          )}
-          {aiSummary && (
-            <button
-              onClick={() => { setAiSummary(null); generateAiSummary(); }}
-              className="btn-ghost btn-sm"
-              title="Regenerate"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-            </button>
-          )}
+      {/* Quick stats grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="glass-card p-4 flex items-center gap-4">
+          <div className="h-10 w-10 rounded-xl bg-brand-500/10 flex items-center justify-center text-brand-400">
+            <Stethoscope size={20} />
+          </div>
+          <div>
+            <p className="text-xs text-zinc-500 uppercase font-bold tracking-wider">History</p>
+            <p className="text-lg font-bold text-white">{history.length} Records</p>
+          </div>
         </div>
-
-        {aiLoading && !aiSummary && (
-          <div className="space-y-3">
-            {[1, 2, 3].map(i => <div key={i} className="shimmer-bar h-4 rounded" />)}
+        <div className="glass-card p-4 flex items-center gap-4">
+          <div className="h-10 w-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400">
+            <Pill size={20} />
           </div>
-        )}
-
-        {aiSummary ? (
-          <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.05] p-4">
-            <p className="text-sm leading-relaxed text-zinc-300 whitespace-pre-line">{aiSummary}</p>
+          <div>
+            <p className="text-xs text-zinc-500 uppercase font-bold tracking-wider">Meds</p>
+            <p className="text-lg font-bold text-white">{reminders.length} Active</p>
           </div>
-        ) : !aiLoading && (
-          <div className="flex flex-col items-center gap-3 py-8 text-center">
-            <Brain className="h-10 w-10 text-zinc-700" />
-            <p className="text-sm text-zinc-500">
-              Generate an AI-powered pre-appointment briefing covering patient history, medications, and clinical alerts.
-            </p>
+        </div>
+        <div className="glass-card p-4 flex items-center gap-4">
+          <div className="h-10 w-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+            <ClipboardList size={20} />
           </div>
-        )}
-
-        {/* Quick stat pills */}
-        <div className="mt-4 flex flex-wrap gap-2">
-          <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-400">
-            <Stethoscope className="h-3 w-3 text-brand-400" />
-            {history.length} medical record{history.length !== 1 ? 's' : ''}
-          </div>
-          <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-400">
-            <Pill className="h-3 w-3 text-blue-400" />
-            {reminders.length} medication{reminders.length !== 1 ? 's' : ''}
-          </div>
-          <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-400">
-            <ClipboardList className="h-3 w-3 text-emerald-400" />
-            {emrs.length} EMR record{emrs.length !== 1 ? 's' : ''}
+          <div>
+            <p className="text-xs text-zinc-500 uppercase font-bold tracking-wider">EMR</p>
+            <p className="text-lg font-bold text-white">{emrs.length} Saved</p>
           </div>
         </div>
       </div>
@@ -400,9 +306,26 @@ Provide a structured pre-appointment briefing covering:
                     <div key={e.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
                       <div className="mb-2 flex items-center justify-between">
                         <p className="font-medium text-zinc-100">{e.diagnosis || 'Consultation'}</p>
-                        <span className="text-xs text-zinc-600">
-                          {e.appointment_date?.split('T')[0] || e.created_at?.split('T')[0]}
-                        </span>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={async () => {
+                              try {
+                                const res = await api.get(`/emr/${e.id}/pdf`);
+                                if (res.data.pdf_url) {
+                                  window.open(res.data.pdf_url, '_blank');
+                                }
+                              } catch (err) {
+                                alert('Failed to generate PDF. Please try again.');
+                              }
+                            }}
+                            className="flex items-center gap-1 text-xs font-semibold text-brand-400 hover:text-brand-300 transition"
+                          >
+                            <FileText size={14} /> Download PDF
+                          </button>
+                          <span className="text-xs text-zinc-600">
+                            {e.appointment_date?.split('T')[0] || e.created_at?.split('T')[0]}
+                          </span>
+                        </div>
                       </div>
                       {e.treatment_plan && (
                         <p className="text-sm text-zinc-400"><span className="text-zinc-500">Treatment:</span> {e.treatment_plan}</p>
@@ -415,6 +338,70 @@ Provide a structured pre-appointment briefing covering:
                           <Calendar className="h-3 w-3" /> Follow-up: {e.follow_up_date?.split('T')[0]}
                         </p>
                       )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Reports Tab */}
+          {tab === 'reports' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-zinc-500">{reports.length} medical report{reports.length !== 1 ? 's' : ''} on file</p>
+                <button
+                  onClick={() => navigate(`/doctor/ai-tools?tab=report&patient=${patientId}`)}
+                  className="btn-ghost btn-sm"
+                >
+                  <Brain className="h-3.5 w-3.5" /> Report Tools
+                </button>
+              </div>
+              {reports.length === 0 ? (
+                <div className="flex flex-col items-center gap-3 py-12 text-center">
+                  <FileText className="h-10 w-10 text-zinc-700" />
+                  <p className="text-zinc-500">No reports uploaded for this patient</p>
+                </div>
+              ) : (
+                <div className="grid gap-6 sm:grid-cols-2">
+                  {reports.map((r) => (
+                    <div key={r.id} className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition hover:border-brand-500/30">
+                      {/* Image Preview if applicable */}
+                      {(r.file_type?.includes('image') || r.file_name?.match(/\.(jpg|jpeg|png)$/i)) && (
+                        <div className="aspect-video w-full overflow-hidden border-b border-white/10 bg-black/40">
+                          <img
+                            src={`/uploads/${r.file_path}`}
+                            alt={r.file_name}
+                            className="h-full w-full object-cover opacity-60 transition group-hover:opacity-100"
+                          />
+                        </div>
+                      )}
+                      
+                      <div className="p-4">
+                        <div className="mb-3 flex items-start justify-between">
+                          <div>
+                            <p className="font-semibold text-zinc-100">{r.report_type?.toUpperCase() || 'GENERAL REPORT'}</p>
+                            <p className="text-xs text-zinc-500">{r.created_at?.split('T')[0]}</p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between border-t border-white/[0.05] pt-3">
+                          <span className="text-[10px] text-zinc-600 truncate max-w-[150px]">{r.file_name}</span>
+                          <a
+                            href={`/uploads/${r.file_path}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            download
+                            className="flex items-center gap-1.5 text-xs font-semibold text-brand-400 hover:text-brand-300 transition"
+                            onClick={(e) => {
+                              // Prevent SPA navigation if href is external
+                              e.stopPropagation();
+                            }}
+                          >
+                            View Original <ChevronRight size={14} />
+                          </a>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>

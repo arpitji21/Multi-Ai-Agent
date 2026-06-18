@@ -1,4 +1,4 @@
-require('dotenv').config({ path: require('path').join(__dirname, '../../../.env') });
+require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const { query, pool } = require('../db');
 

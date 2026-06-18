@@ -23,16 +23,28 @@ function AiSpinner() {
   );
 }
 
-function SaveBanner({ message, type = 'success' }) {
+function SaveBanner({ message, type = 'success', pdfUrl }) {
   if (!message) return null;
   return (
-    <div className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm ${
+    <div className={`flex items-center justify-between gap-2 rounded-xl border px-4 py-3 text-sm ${
       type === 'success'
         ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
         : 'border-rose-500/30 bg-rose-500/10 text-rose-400'
     }`}>
-      {type === 'success' ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-      {message}
+      <div className="flex items-center gap-2">
+        {type === 'success' ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+        {message}
+      </div>
+      {pdfUrl && (
+        <a
+          href={pdfUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 font-bold underline decoration-emerald-500/30 underline-offset-4 hover:text-white transition"
+        >
+          <FileText size={14} /> Download PDF
+        </a>
+      )}
     </div>
   );
 }
@@ -59,32 +71,27 @@ function EMRGenerator({ patients, prefill }) {
     setAiLoading(true);
     setAiOutput(null);
     try {
-      const res = await api.post('/ai/chat', {
-        message: `You are a clinical EMR assistant. Based on these doctor notes, generate a structured EMR with:
-1. PRIMARY DIAGNOSIS: (concise medical diagnosis)
-2. TREATMENT PLAN: (step-by-step treatment)
-3. PRESCRIPTION: (medications with dosage and frequency)
-4. FOLLOW-UP: (recommended follow-up timeframe and actions)
-
-Doctor notes: "${notes}"
-Vitals: BP ${vitalBP || 'not recorded'}, Temp ${vitalTemp || 'not recorded'}°F, Pulse ${vitalPulse || 'not recorded'} bpm.`,
-        context: { type: 'emr_generation', patient_id: patientId },
+      const res = await api.post('/ai/generate-emr', {
+        notes,
+        patient_id: patientId ? parseInt(patientId) : null,
+        vitals: { bp: vitalBP, temp: vitalTemp, pulse: vitalPulse }
       });
 
-      const text = res.data.reply;
-      setAiOutput(text);
+      const data = res.data.emr || res.data;
+      setAiOutput(JSON.stringify(data));
+      
+      setDiagnosis(data.diagnosis || '');
+      setTreatment(data.treatment_plan || '');
+      setPrescription(data.prescription || '');
 
-      // Parse sections from AI output
-      const extract = (label) => {
-        const rx = new RegExp(`${label}[:\\s]+([^1-9]+?)(?=\\d\\.|$)`, 'i');
-        const m = text.match(rx);
-        return m ? m[1].trim() : '';
-      };
-      setDiagnosis(extract('PRIMARY DIAGNOSIS') || text.split('\n')[0]);
-      setTreatment(extract('TREATMENT PLAN'));
-      setPrescription(extract('PRESCRIPTION'));
-      setFollowUp(extract('FOLLOW-UP'));
-    } catch {
+      const aiDate = data.follow_up_date || '';
+
+      if (/^\d{4}-\d{2}-\d{2}$/.test(aiDate)) {
+        setFollowUp(aiDate);
+      } else {
+        setFollowUp('');
+      }
+    }catch {
       setAiOutput('AI generation failed. Please fill in the fields manually.');
     } finally {
       setAiLoading(false);
@@ -103,17 +110,37 @@ Vitals: BP ${vitalBP || 'not recorded'}, Temp ${vitalTemp || 'not recorded'}°F,
         ? { bp: vitalBP, temp: vitalTemp, pulse: vitalPulse }
         : null;
 
-      await api.post('/emr', {
-        patient_id: parseInt(patientId),
-        appointment_id: apptId ? parseInt(apptId) : null,
-        diagnosis,
-        treatment_plan: treatment,
-        prescription,
-        follow_up_date: followUp || null,
-        notes,
-        vital_signs,
-      });
-      setBanner({ msg: 'EMR saved successfully!', type: 'success' });
+        console.log('Saving EMR:', {
+          patient_id: parseInt(patientId),
+          appointment_id: apptId ? parseInt(apptId) : null,
+          diagnosis,
+          treatment_plan: treatment,
+          prescription,
+          follow_up_date: followUp,
+        });
+        
+        const res = await api.post('/emr', {
+          patient_id: parseInt(patientId),
+          appointment_id: apptId ? parseInt(apptId) : null,
+          diagnosis,
+          treatment_plan: treatment,
+          prescription,
+          follow_up_date:
+            followUp && /^\d{4}-\d{2}-\d{2}$/.test(followUp)
+              ? followUp
+              : null,
+          notes,
+          vital_signs,
+        });
+
+      const emrId = res.data.id;
+      let pdfUrl = null;
+      try {
+        const pdfRes = await api.get(`/emr/${emrId}/pdf`);
+        pdfUrl = pdfRes.data.pdf_url;
+      } catch (e) { console.error('PDF fetch error', e); }
+
+      setBanner({ msg: 'EMR saved successfully!', type: 'success', pdfUrl });
       setNotes(''); setAiOutput(null); setDiagnosis(''); setTreatment(''); setPrescription(''); setFollowUp('');
     } catch (err) {
       setBanner({ msg: err.response?.data?.error || 'Failed to save EMR.', type: 'error' });
@@ -212,11 +239,16 @@ Vitals: BP ${vitalBP || 'not recorded'}, Temp ${vitalTemp || 'not recorded'}°F,
             <textarea value={prescription} onChange={e => setPrescription(e.target.value)} rows={3} className="input resize-none" placeholder="Medications, dosages, frequency…" />
           </div>
           <div>
-            <label className="field-label">Follow-up Date / Notes</label>
-            <input value={followUp} onChange={e => setFollowUp(e.target.value)} className="input" placeholder="e.g. 2 weeks — check BP, or 2025-03-15" />
+          <label className="field-label">Follow-up Date</label>
+            <input
+              type="date"
+              value={followUp}
+              onChange={e => setFollowUp(e.target.value)}
+              className="input"
+            />
           </div>
 
-          {banner && <SaveBanner message={banner.msg} type={banner.type} />}
+          {banner && <SaveBanner message={banner.msg} type={banner.type} pdfUrl={banner.pdfUrl} />}
 
           <button onClick={saveEMR} disabled={saving} className="btn-success w-full">
             {saving ? <AiSpinner /> : <><Save className="h-4 w-4" /> Save EMR to Patient Record</>}
@@ -336,7 +368,7 @@ Make it clinically appropriate but note this is a draft for doctor review.`,
           <div className="rounded-lg border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-400">
             ⚠ This is an AI-generated draft. Review carefully before prescribing. Always verify drug interactions and patient allergies.
           </div>
-          {banner && <SaveBanner message={banner.msg} type={banner.type} />}
+          {banner && <SaveBanner message={banner.msg} type={banner.type} pdfUrl={banner.pdfUrl} />}
           <button onClick={savePrescription} disabled={saving} className="btn-success w-full">
             {saving ? <AiSpinner /> : <><Save className="h-4 w-4" /> Save Prescription to EMR</>}
           </button>
@@ -659,7 +691,7 @@ Provide a structured follow-up plan with:
             </div>
           </div>
 
-          {banner && <SaveBanner message={banner.msg} type={banner.type} />}
+          {banner && <SaveBanner message={banner.msg} type={banner.type} pdfUrl={banner.pdfUrl} />}
         </div>
       )}
     </div>

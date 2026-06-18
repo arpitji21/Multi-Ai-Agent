@@ -1,7 +1,11 @@
 const OpenAI = require('openai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const apiKey = process.env.OPENAI_API_KEY;
-const client = apiKey ? new OpenAI({ apiKey }) : null;
+const openAIKey = process.env.OPENAI_API_KEY;
+const geminiKey = process.env.GEMINI_API_KEY;
+
+const openai = openAIKey ? new OpenAI({ apiKey: openAIKey }) : null;
+const genAI = geminiKey ? new GoogleGenerativeAI(geminiKey) : null;
 
 /* ── Smart contextual fallback when no API key is configured ── */
 function smartFallback(agentType, userMessage, context = {}) {
@@ -118,50 +122,97 @@ function smartFallback(agentType, userMessage, context = {}) {
     };
   }
 
+  if (agentType === 'emr_generator') {
+    return {
+      subjective: userMessage,
+      objective: "Vitals and physical examination to be recorded by physician.",
+      assessment: "Clinical assessment based on patient history.",
+      plan: "Follow-up and treatment as discussed.",
+      diagnosis: "Pending clinical review",
+      treatment_plan: "Review patient history and schedule follow-up.",
+      prescription: "None at this time.",
+      follow_up_date: null,
+      diagnoses: ["Pending review"],
+      prescriptions: []
+    };
+  }
+
   // Generic fallback for other contexts
-  return `I'm your MediAI Assistant. I've received your message and I'm ready to help. Please note that enhanced AI capabilities require an OpenAI API key to be configured. For immediate medical concerns, please contact your healthcare provider directly.`;
+  return `I'm your MediAI Assistant. I've received your message and I'm ready to help. Please note that enhanced AI capabilities require an API key to be configured. For immediate medical concerns, please contact your healthcare provider directly.`;
+}
+
+/* ── Gemini implementation ── */
+async function callGemini(systemPrompt, userMessage, options = {}) {
+  const model = genAI.getGenerativeModel({ 
+    model: options.model || 'gemini-1.5-flash',
+    systemInstruction: systemPrompt
+  });
+
+  const chat = model.startChat({
+    history: (options.history || []).map(h => ({
+      role: h.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: h.message }]
+    })).slice(-6)
+  });
+
+  const result = await chat.sendMessage(userMessage);
+  const response = await result.response;
+  return response.text();
+}
+
+/* ── OpenAI implementation ── */
+async function callOpenAI(systemPrompt, userMessage, options = {}) {
+  const messages = [{ role: 'system', content: systemPrompt }];
+  if (options.history && options.history.length > 0) {
+    options.history.slice(-6).forEach(h => {
+      if (h.role === 'user' || h.role === 'assistant') {
+        messages.push({ role: h.role, content: h.message });
+      }
+    });
+  }
+  messages.push({ role: 'user', content: userMessage });
+
+  const response = await openai.chat.completions.create({
+    model: options.model || 'gpt-4o-mini',
+    messages,
+    max_tokens: options.maxTokens || 800,
+    temperature: options.temperature || 0.7,
+  });
+
+  return response.choices[0].message.content;
 }
 
 /* ── Main AI call function ── */
 async function callAI(systemPrompt, userMessage, options = {}) {
-  if (!client) {
-    const fallback = smartFallback(options.agentType || 'generic', userMessage, options.context || {});
-    if (typeof fallback === 'object' && fallback !== null) return fallback;
-    return fallback || `MediAI Assistant: I received your message. Enhanced AI responses require API configuration.`;
-  }
-
-  try {
-    const messages = [
-      { role: 'system', content: systemPrompt },
-    ];
-
-    // Add conversation history if provided
-    if (options.history && options.history.length > 0) {
-      const recent = options.history.slice(-6); // last 3 exchanges
-      recent.forEach(h => {
-        if (h.role === 'user' || h.role === 'assistant') {
-          messages.push({ role: h.role, content: h.message });
+  // Primary: Gemini
+  if (genAI) {
+    try {
+      return await callGemini(systemPrompt, userMessage, options);
+    } catch (err) {
+      console.error('Gemini API error:', err.message);
+      // Fallback to OpenAI if Gemini fails
+      if (openai) {
+        try {
+          return await callOpenAI(systemPrompt, userMessage, options);
+        } catch (oerr) {
+          console.error('OpenAI API fallback error:', oerr.message);
         }
-      });
+      }
     }
-
-    messages.push({ role: 'user', content: userMessage });
-
-    const response = await client.chat.completions.create({
-      model: options.model || 'gpt-4o-mini',
-      messages,
-      max_tokens: options.maxTokens || 800,
-      temperature: options.temperature || 0.7,
-    });
-
-    return response.choices[0].message.content;
-  } catch (err) {
-    console.error('OpenAI API error:', err.message);
-    // Fall back to smart contextual response on API error
-    const fallback = smartFallback(options.agentType || 'generic', userMessage, options.context || {});
-    if (typeof fallback === 'object' && fallback !== null) return fallback;
-    return fallback;
+  } 
+  // Secondary: OpenAI
+  else if (openai) {
+    try {
+      return await callOpenAI(systemPrompt, userMessage, options);
+    } catch (err) {
+      console.error('OpenAI API error:', err.message);
+    }
   }
+
+  // Final fallback: Smart predefined responses
+  const fallback = smartFallback(options.agentType || 'generic', userMessage, options.context || {});
+  if (typeof fallback === 'object' && fallback !== null) return fallback;
+  return fallback || `MediAI Assistant: I received your message. Enhanced AI responses require API configuration.`;
 }
 
-module.exports = { callAI, smartFallback, isAIEnabled: !!client };
+module.exports = { callAI, smartFallback, isAIEnabled: !!(openai || genAI) };

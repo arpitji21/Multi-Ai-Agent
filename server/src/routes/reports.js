@@ -31,6 +31,8 @@ const upload = multer({
 router.get('/', authenticate, async (req, res) => {
   try {
     let result;
+    const { patient_id } = req.query;
+
     if (req.user.role === 'patient') {
       const pat = await query(`SELECT id FROM patients WHERE user_id=$1`, [req.user.id]);
       if (pat.rows.length === 0) return res.json([]);
@@ -41,15 +43,21 @@ router.get('/', authenticate, async (req, res) => {
          WHERE r.patient_id=$1 ORDER BY r.created_at DESC`,
         [pat.rows[0].id]
       );
-    } else if (req.user.role === 'doctor') {
-      result = await query(
-        `SELECT r.*, u.name as patient_name, aa.patient_summary, aa.doctor_summary, aa.is_critical
-         FROM reports r
-         JOIN patients p ON r.patient_id = p.id
-         JOIN users u ON p.user_id = u.id
-         LEFT JOIN ai_analyses aa ON aa.report_id = r.id
-         ORDER BY r.created_at DESC LIMIT 50`
-      );
+    } else if (req.user.role === 'doctor' || req.user.role === 'admin') {
+      let q = `
+        SELECT r.*, u.name as patient_name, aa.patient_summary, aa.doctor_summary, aa.is_critical, aa.key_findings, aa.abnormal_values
+        FROM reports r
+        JOIN patients p ON r.patient_id = p.id
+        JOIN users u ON p.user_id = u.id
+        LEFT JOIN ai_analyses aa ON aa.report_id = r.id
+      `;
+      let params = [];
+      if (patient_id) {
+        q += ` WHERE r.patient_id = $1`;
+        params.push(patient_id);
+      }
+      q += ` ORDER BY r.created_at DESC LIMIT 100`;
+      result = await query(q, params);
     } else {
       result = await query(
         `SELECT r.*, u.name as patient_name

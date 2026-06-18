@@ -1,6 +1,9 @@
 const express = require('express');
 const { query } = require('../db');
 const { authenticate, requireRole } = require('../middleware/auth');
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
 
 const router = express.Router();
 
@@ -15,6 +18,65 @@ async function getOwnDoctorId(userId) {
   const r = await query(`SELECT id FROM doctors WHERE user_id=$1`, [userId]);
   return r.rows[0]?.id ?? null;
 }
+
+// GET /api/emr/:id/pdf — Download PDF of EMR
+router.get('/:id/pdf', authenticate, async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT e.*, du.name as doctor_name, d.specialization, pu.name as patient_name,
+              p.user_id as patient_user_id
+       FROM emr_records e
+       JOIN doctors d ON e.doctor_id = d.id
+       JOIN users du ON d.user_id = du.id
+       JOIN patients p ON e.patient_id = p.id
+       JOIN users pu ON p.user_id = pu.id
+       WHERE e.id=$1`,
+      [req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'EMR not found' });
+
+    const emr = result.rows[0];
+    
+    // Auth check
+    if (req.user.role === 'patient' && emr.patient_user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (req.user.role === 'doctor') {
+        const docId = await getOwnDoctorId(req.user.id);
+        if (emr.doctor_id !== docId) return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const pdfDir = path.join(__dirname, '../../uploads/emr_reports');
+    if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true });
+
+    const pdfName = `emr_${emr.id}_${Date.now()}.pdf`;
+    const pdfPath = path.join(pdfDir, pdfName);
+
+    // Run Python script to generate PDF
+    const pythonProcess = spawn('python', [
+      path.join(__dirname, '../utils/generate_pdf.py'),
+      JSON.stringify(emr),
+      pdfPath
+    ]);
+
+    let errorData = '';
+    pythonProcess.stderr.on('data', (data) => {
+      errorData += data.toString();
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        console.error('Python PDF generation error:', errorData);
+        return res.status(500).json({ error: 'Failed to generate PDF' });
+      }
+      // Return the URL to the generated PDF
+      res.json({ pdf_url: `/uploads/emr_reports/${pdfName}` });
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to process PDF request' });
+  }
+});
 
 // GET /api/emr — doctor sees their own EMRs; admin sees all
 router.get('/', authenticate, requireRole('doctor', 'admin'), async (req, res) => {
