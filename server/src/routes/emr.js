@@ -79,6 +79,103 @@ async function getOwnDoctorId(userId) {
 //   }
 // });
 
+// router.get('/:id/pdf', authenticate, async (req, res) => {
+//   try {
+//     const result = await query(
+//       `SELECT e.*, du.name as doctor_name, d.specialization,
+//               pu.name as patient_name,
+//               p.user_id as patient_user_id
+//        FROM emr_records e
+//        JOIN doctors d ON e.doctor_id = d.id
+//        JOIN users du ON d.user_id = du.id
+//        JOIN patients p ON e.patient_id = p.id
+//        JOIN users pu ON p.user_id = pu.id
+//        WHERE e.id=$1`,
+//       [req.params.id]
+//     );
+
+//     if (result.rows.length === 0) {
+//       return res.status(404).json({ error: 'EMR not found' });
+//     }
+
+//     const emr = result.rows[0];
+
+//     // Authorization
+//     if (
+//       req.user.role === 'patient' &&
+//       emr.patient_user_id !== req.user.id
+//     ) {
+//       return res.status(403).json({ error: 'Forbidden' });
+//     }
+
+//     if (req.user.role === 'doctor') {
+//       const docId = await getOwnDoctorId(req.user.id);
+
+//       if (emr.doctor_id !== docId) {
+//         return res.status(403).json({ error: 'Forbidden' });
+//       }
+//     }
+
+//     res.setHeader('Content-Type', 'application/pdf');
+//     res.setHeader(
+//       'Content-Disposition',
+//       `attachment; filename=EMR-${emr.id}.pdf`
+//     );
+
+//     const doc = new PDFDocument();
+
+//     doc.pipe(res);
+
+//     doc.fontSize(22).text('Electronic Medical Record', {
+//       align: 'center'
+//     });
+
+//     doc.moveDown();
+
+//     doc.fontSize(14).text(`Patient: ${emr.patient_name}`);
+//     doc.text(`Doctor: ${emr.doctor_name}`);
+//     doc.text(`Specialization: ${emr.specialization || 'N/A'}`);
+
+//     doc.moveDown();
+
+//     doc.text(`Diagnosis: ${emr.diagnosis || 'N/A'}`);
+
+//     doc.moveDown();
+
+//     doc.text(`Treatment Plan:`);
+//     doc.text(emr.treatment_plan || 'N/A');
+
+//     doc.moveDown();
+
+//     doc.text(`Prescription:`);
+//     doc.text(emr.prescription || 'N/A');
+
+//     doc.moveDown();
+
+//     doc.text(`Notes:`);
+//     doc.text(emr.notes || 'N/A');
+
+//     doc.moveDown();
+
+//     doc.text(
+//       `Follow Up Date: ${
+//         emr.follow_up_date
+//           ? new Date(emr.follow_up_date).toLocaleDateString()
+//           : 'N/A'
+//       }`
+//     );
+
+//     doc.end();
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({
+//       error: 'Failed to generate PDF'
+//     });
+//   }
+// });
+
+
 router.get('/:id/pdf', authenticate, async (req, res) => {
   try {
     const result = await query(
@@ -122,53 +219,170 @@ router.get('/:id/pdf', authenticate, async (req, res) => {
       `attachment; filename=EMR-${emr.id}.pdf`
     );
 
-    const doc = new PDFDocument();
+    const doc = new PDFDocument({
+      size: 'A4',
+      margin: 50
+    });
 
     doc.pipe(res);
 
-    doc.fontSize(22).text('Electronic Medical Record', {
-      align: 'center'
-    });
+    // ===== TITLE =====
+    doc
+      .fontSize(24)
+      .fillColor('#ED2024')
+      .text('MediAI Hospital EMR Report', {
+        align: 'center'
+      });
 
-    doc.moveDown();
+    doc.moveDown(1);
 
-    doc.fontSize(14).text(`Patient: ${emr.patient_name}`);
-    doc.text(`Doctor: ${emr.doctor_name}`);
-    doc.text(`Specialization: ${emr.specialization || 'N/A'}`);
+    // ===== PATIENT INFO BOX =====
+    doc
+      .roundedRect(50, 110, 500, 85, 5)
+      .lineWidth(1)
+      .stroke('#CCCCCC');
 
-    doc.moveDown();
-
-    doc.text(`Diagnosis: ${emr.diagnosis || 'N/A'}`);
-
-    doc.moveDown();
-
-    doc.text(`Treatment Plan:`);
-    doc.text(emr.treatment_plan || 'N/A');
-
-    doc.moveDown();
-
-    doc.text(`Prescription:`);
-    doc.text(emr.prescription || 'N/A');
-
-    doc.moveDown();
-
-    doc.text(`Notes:`);
-    doc.text(emr.notes || 'N/A');
-
-    doc.moveDown();
+    doc
+      .fillColor('black')
+      .fontSize(11);
 
     doc.text(
-      `Follow Up Date: ${
-        emr.follow_up_date
-          ? new Date(emr.follow_up_date).toLocaleDateString()
-          : 'N/A'
-      }`
+      `Patient Name: ${emr.patient_name || 'N/A'}`,
+      70,
+      125
     );
+
+    doc.text(
+      `Doctor Name: ${emr.doctor_name || 'N/A'}`,
+      300,
+      125
+    );
+
+    doc.text(
+      `Date: ${
+        emr.created_at
+          ? new Date(emr.created_at).toLocaleDateString()
+          : 'N/A'
+      }`,
+      70,
+      155
+    );
+
+    doc.text(
+      `Specialization: ${emr.specialization || 'N/A'}`,
+      300,
+      155
+    );
+
+    let y = 230;
+
+    function addSection(title, content) {
+      doc
+        .fillColor('#333333')
+        .rect(50, y, 500, 25)
+        .fill();
+
+      doc
+        .fillColor('white')
+        .fontSize(12)
+        .text(title, 60, y + 6);
+
+      y += 40;
+
+      doc
+        .fillColor('black')
+        .fontSize(11)
+        .text(
+          content || 'No information available.',
+          60,
+          y,
+          {
+            width: 470
+          }
+        );
+
+      y = doc.y + 20;
+    }
+
+    // ===== VITALS =====
+    if (emr.vital_signs) {
+      let vitals = emr.vital_signs;
+
+      if (typeof vitals === 'string') {
+        try {
+          vitals = JSON.parse(vitals);
+        } catch {
+          vitals = null;
+        }
+      }
+
+      if (vitals) {
+        addSection(
+          'VITAL SIGNS',
+          `Blood Pressure: ${vitals.bp || '-'} mmHg
+
+Temperature: ${vitals.temp || '-'} °F
+
+Heart Rate: ${vitals.pulse || '-'} bpm`
+        );
+      }
+    }
+
+    // ===== DIAGNOSIS =====
+    addSection(
+      'DIAGNOSIS',
+      emr.diagnosis || 'No diagnosis recorded.'
+    );
+
+    // ===== NOTES =====
+    addSection(
+      'CLINICAL NOTES',
+      emr.notes || 'No clinical notes available.'
+    );
+
+    // ===== TREATMENT =====
+    addSection(
+      'TREATMENT PLAN',
+      emr.treatment_plan ||
+        'No treatment plan recorded.'
+    );
+
+    // ===== PRESCRIPTION =====
+    addSection(
+      'PRESCRIBED MEDICATIONS',
+      emr.prescription ||
+        'No medications prescribed.'
+    );
+
+    // ===== FOLLOW UP =====
+    if (emr.follow_up_date) {
+      addSection(
+        'FOLLOW-UP INSTRUCTIONS',
+        `Scheduled Follow-up: ${new Date(
+          emr.follow_up_date
+        ).toLocaleDateString()}`
+      );
+    }
+
+    // ===== FOOTER =====
+    doc
+      .fontSize(8)
+      .fillColor('gray')
+      .text(
+        'This is a computer-generated EMR report from MediAI Hospital Suite. Please consult your physician for medical advice.',
+        50,
+        760,
+        {
+          align: 'center',
+          width: 500
+        }
+      );
 
     doc.end();
 
   } catch (err) {
     console.error(err);
+
     res.status(500).json({
       error: 'Failed to generate PDF'
     });
