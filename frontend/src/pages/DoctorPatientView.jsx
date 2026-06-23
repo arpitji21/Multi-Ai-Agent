@@ -337,23 +337,45 @@ export default function DoctorPatientView() {
                       <div className="mb-2 flex items-center justify-between">
                         <p className="font-medium text-zinc-100">{e.diagnosis || 'Consultation'}</p>
                         <div className="flex items-center gap-3">
-                          <button
+                        <button
                             onClick={async () => {
                               try {
-                                const res = await api.get(`/emr/${e.id}/pdf`);
-                                if (res.data.pdf_url) {
-                                  // pdf_url is a relative path like /uploads/emr_reports/xxx.pdf
-                                  // We need to resolve it against the backend origin, not the frontend
-                                  const backendBase = api.defaults.baseURL.replace(/\/api$/, '');
-                                  window.open(`${backendBase}${res.data.pdf_url}`, '_blank');
-                                }
+                                const response = await api.get(
+                                  `/emr/${e.id}/pdf`,
+                                  {
+                                    responseType: 'blob'
+                                  }
+                                );
+
+                                const blob = new Blob(
+                                  [response.data],
+                                  { type: 'application/pdf' }
+                                );
+
+                                const url = window.URL.createObjectURL(blob);
+
+                                const link = document.createElement('a');
+
+                                link.href = url;
+                                link.download = `EMR-${e.id}.pdf`;
+
+                                document.body.appendChild(link);
+
+                                link.click();
+
+                                link.remove();
+
+                                window.URL.revokeObjectURL(url);
+
                               } catch (err) {
-                                alert('Failed to generate PDF. Please try again.');
+                                console.error(err);
+                                alert('Failed to download PDF');
                               }
                             }}
                             className="flex items-center gap-1 text-xs font-semibold text-brand-400 hover:text-brand-300 transition"
                           >
-                            <FileText size={14} /> Download PDF
+                            <FileText size={14} />
+                            Download PDF
                           </button>
                           <span className="text-xs text-zinc-600">
                             {e.appointment_date?.split('T')[0] || e.created_at?.split('T')[0]}
