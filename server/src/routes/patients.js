@@ -44,8 +44,8 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// POST /api/patients — admin creates a patient (registration handled in /auth/register)
-router.post('/', authenticate, requireRole('admin'), async (req, res) => {
+// POST /api/patients — admin/doctor creates a patient (self-registration handled in /auth/register)
+router.post('/', authenticate, requireRole('admin', 'doctor'), async (req, res) => {
   try {
     const { name, email, password, phone, date_of_birth, gender, blood_group, address, emergency_contact, allergies } = req.body;
     if (!name || !email || !password) {
@@ -183,6 +183,70 @@ router.get('/:id/health-score', authenticate, async (req, res) => {
     res.json({ health_score: result.rows[0].health_score || 75 });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch health score' });
+  }
+});
+
+// GET /api/patients/:id/health-trends — own record or staff
+router.get('/:id/health-trends', authenticate, async (req, res) => {
+  try {
+    const allowed = await ownOrStaff(req, res, req.params.id);
+    if (!allowed) return;
+
+    // Fetch historical health scores from audit logs or calculated from reports
+    // For now, let's aggregate from reports and EMRs to build a history
+    const reportTrends = await query(`
+      SELECT r.created_at AS date,
+             aa.health_score_impact,
+             aa.abnormal_values
+      FROM reports r
+      JOIN ai_analyses aa ON aa.report_id = r.id
+      WHERE r.patient_id = $1
+      ORDER BY r.created_at ASC
+    `, [req.params.id]);
+
+    const emrTrends = await query(`
+      SELECT created_at AS date,
+             vital_signs
+      FROM emr_records
+      WHERE patient_id = $1 AND vital_signs IS NOT NULL
+      ORDER BY created_at ASC
+    `, [req.params.id]);
+
+    // Format trends
+    const trends = [];
+    let currentScore = 75; // Base fallback
+
+    // Merge and sort by date
+    const allData = [
+      ...reportTrends.rows.map(r => ({ ...r, type: 'report' })),
+      ...emrTrends.rows.map(e => ({ ...e, type: 'emr' }))
+    ].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    allData.forEach(item => {
+      if (item.type === 'report') {
+        currentScore += (item.health_score_impact || 0);
+        // Penalize for abnormals
+        const abnormals = Array.isArray(item.abnormal_values) ? item.abnormal_values.length : 
+          (typeof item.abnormal_values === 'string' ? JSON.parse(item.abnormal_values || '[]').length : 0);
+        currentScore -= (abnormals * 2);
+      }
+      
+      currentScore = Math.min(100, Math.max(30, currentScore));
+      
+      const vitals = item.vital_signs || {};
+      trends.push({
+        date: item.date,
+        healthScore: Math.round(currentScore),
+        heartRate: vitals.heart_rate || vitals.pulse || null,
+        bloodPressure: vitals.blood_pressure || vitals.bp || null,
+        weight: vitals.weight || null
+      });
+    });
+
+    res.json(trends);
+  } catch (err) {
+    console.error('Health trends fetch error:', err);
+    res.status(500).json({ error: 'Failed to fetch health trends' });
   }
 });
 

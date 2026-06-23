@@ -22,6 +22,12 @@ export default function Login() {
     password: '',
     role: 'patient',
     phone: '',
+    date_of_birth: '',
+    gender: 'Other',
+    blood_group: '',
+    address: '',
+    emergency_contact: '',
+    allergies: '',
   });
 
   const handleChange = (e) => {
@@ -72,7 +78,7 @@ export default function Login() {
         </div>
 
         {/* Card */}
-        <div className="glass-card p-8">
+        <div className={`glass-card p-8 ${mode === 'register' ? 'max-h-[85vh] overflow-y-auto' : ''}`}>
           {/* Mode tabs */}
           <div className="mb-6 flex rounded-xl border border-white/10 bg-white/5 p-1">
             {['login', 'register'].map((m) => (
@@ -92,6 +98,7 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="space-y-4">
             {mode === 'register' && (
               <>
+                <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Basic Information</p>
                 <div>
                   <label className="field-label">Full Name</label>
                   <input
@@ -111,6 +118,71 @@ export default function Login() {
                     onChange={handleChange}
                     className="input"
                     placeholder="+1-555-0100"
+                  />
+                </div>
+
+                <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 pt-2">Contact & Medical</p>
+                <div>
+                  <label className="field-label">Date of Birth</label>
+                  <input
+                    type="date"
+                    name="date_of_birth"
+                    value={form.date_of_birth}
+                    onChange={handleChange}
+                    className="input"
+                  />
+                </div>
+                <div>
+                  <label className="field-label">Gender</label>
+                  <select
+                    name="gender"
+                    value={form.gender}
+                    onChange={handleChange}
+                    className="input"
+                  >
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="field-label">Blood Group</label>
+                  <input
+                    name="blood_group"
+                    value={form.blood_group}
+                    onChange={handleChange}
+                    className="input"
+                    placeholder="e.g. O+, AB-"
+                  />
+                </div>
+                <div>
+                  <label className="field-label">Allergies (if any)</label>
+                  <input
+                    name="allergies"
+                    value={form.allergies}
+                    onChange={handleChange}
+                    className="input"
+                    placeholder="Peanuts, Penicillin, etc."
+                  />
+                </div>
+                <div>
+                  <label className="field-label">Emergency Contact</label>
+                  <input
+                    name="emergency_contact"
+                    value={form.emergency_contact}
+                    onChange={handleChange}
+                    className="input"
+                    placeholder="Name & phone number"
+                  />
+                </div>
+                <div>
+                  <label className="field-label">Address</label>
+                  <textarea
+                    name="address"
+                    value={form.address}
+                    onChange={handleChange}
+                    className="input min-h-[72px] resize-none"
+                    placeholder="Current residential address"
                   />
                 </div>
               </>

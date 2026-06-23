@@ -1,9 +1,56 @@
 const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { query } = require('../db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { orchestrate, analyzeReport, symptomCheck, calculateHealthScore, generateEMR } = require('../ai/agents');
+const { callAI, isAIEnabled } = require('../ai/client');
+const { getSystemPrompt } = require('../ai/prompts');
+const { runPythonScript } = require('../utils/pythonBridge');
 
 const router = express.Router();
+
+const clinicalUploadDir = path.join(__dirname, '../../uploads/clinical');
+if (!fs.existsSync(clinicalUploadDir)) fs.mkdirSync(clinicalUploadDir, { recursive: true });
+
+const clinicalUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_, __, cb) => cb(null, clinicalUploadDir),
+    filename: (_, file, cb) => cb(null, `clinical_${Date.now()}${path.extname(file.originalname)}`),
+  }),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_, file, cb) => {
+    const allowed = ['.pdf', '.txt', '.csv'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, allowed.includes(ext));
+  },
+});
+
+async function runClinicalAnalyzer(payload) {
+  try {
+    return await runPythonScript('clinical_analyzer.py', payload);
+  } catch (err) {
+    console.warn('Python clinical analyzer unavailable:', err.message);
+    return null;
+  }
+}
+
+async function enhanceWithAI(agentType, structured, userMessage) {
+  if (!isAIEnabled || !structured?.success) return structured;
+  try {
+    const systemPrompt = getSystemPrompt(agentType);
+    const raw = await callAI(systemPrompt, userMessage, {
+      agentType,
+      maxTokens: 900,
+      temperature: 0.3,
+    });
+    const narrative = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
+    return { ...structured, narrative, ai_enhanced: true };
+  } catch {
+    return structured;
+  }
+}
 
 /* ── POST /api/ai/chat — Central Orchestrator ── */
 router.post('/chat', authenticate, async (req, res) => {
@@ -346,6 +393,139 @@ router.delete('/voice-transcripts/:id', authenticate, async (req, res) => {
     res.json({ message: 'Transcript deleted' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete transcript' });
+  }
+});
+
+/* ── POST /api/ai/clinical/summarize-report — Python lab parsing + optional AI polish ── */
+router.post('/clinical/summarize-report', authenticate, requireRole('doctor', 'admin'), clinicalUpload.single('file'), async (req, res) => {
+  let tempFile = null;
+  try {
+    const reportType = req.body.report_type || 'general';
+    let text = (req.body.text || '').trim();
+
+    if (req.file) {
+      tempFile = req.file.path;
+      if (req.file.originalname.match(/\.(txt|csv)$/i)) {
+        text = fs.readFileSync(tempFile, 'utf8').slice(0, 12000);
+      }
+    }
+
+    let result = await runClinicalAnalyzer({
+      mode: 'summarize',
+      text,
+      file_path: tempFile && !text ? tempFile : undefined,
+      report_type: reportType,
+    });
+
+    if (!result?.success) {
+      if (!text) {
+        return res.status(400).json({ error: result?.error || 'Provide report text or upload a PDF/txt file' });
+      }
+      const { reply } = await orchestrate({
+        message: `Summarize this medical report for a doctor:\n\n${text.slice(0, 6000)}`,
+        context: { type: 'report_summary' },
+        userRole: req.user.role,
+        userId: req.user.id,
+        history: [],
+      });
+      return res.json({
+        success: true,
+        engine: 'ai_fallback',
+        narrative: reply,
+        key_findings: [],
+        abnormal_values: [],
+        is_critical: reply.toLowerCase().includes('critical'),
+      });
+    }
+
+    if (isAIEnabled) {
+      result = await enhanceWithAI(
+        'doctor_assistant',
+        result,
+        `Refine this structured report analysis for a physician. Keep all critical flags. Structured data:\n${JSON.stringify({
+          lab_values: result.lab_values,
+          abnormal_values: result.abnormal_values,
+          clinical_impression: result.clinical_impression,
+          recommended_actions: result.recommended_actions,
+        }, null, 2)}\n\nOriginal report excerpt:\n${text.slice(0, 2000)}`
+      );
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error('Clinical summarize error:', err);
+    res.status(500).json({ error: 'Report summarization failed' });
+  } finally {
+    if (tempFile && fs.existsSync(tempFile)) {
+      fs.unlink(tempFile, () => {});
+    }
+  }
+});
+
+/* ── POST /api/ai/clinical/followup-plan — Evidence-based follow-up + optional AI polish ── */
+router.post('/clinical/followup-plan', authenticate, requireRole('doctor', 'admin'), async (req, res) => {
+  try {
+    const { patient_id, diagnosis, treatment, notes } = req.body;
+    if (!diagnosis?.trim()) {
+      return res.status(400).json({ error: 'diagnosis is required' });
+    }
+
+    let patient = {};
+    if (patient_id) {
+      const patRes = await query(
+        `SELECT p.*, u.name FROM patients p JOIN users u ON u.id = p.user_id WHERE p.id = $1`,
+        [patient_id]
+      );
+      if (patRes.rows[0]) {
+        const p = patRes.rows[0];
+        patient = {
+          name: p.name,
+          age: p.date_of_birth
+            ? Math.floor((Date.now() - new Date(p.date_of_birth)) / 31557600000)
+            : null,
+          gender: p.gender,
+          allergies: p.allergies,
+          blood_group: p.blood_group,
+        };
+      }
+    }
+
+    let result = await runClinicalAnalyzer({
+      mode: 'followup',
+      diagnosis,
+      treatment: treatment || '',
+      notes: notes || '',
+      patient,
+    });
+
+    if (!result?.success) {
+      const { reply } = await orchestrate({
+        message: `Recommend a follow-up plan.\nDiagnosis: ${diagnosis}\nTreatment: ${treatment || 'N/A'}\nNotes: ${notes || 'None'}`,
+        context: { type: 'followup_recommendation', patient_id },
+        userRole: req.user.role,
+        userId: req.user.id,
+        history: [],
+      });
+      return res.json({
+        success: true,
+        engine: 'ai_fallback',
+        narrative: reply,
+        follow_up_date: null,
+      });
+    }
+
+    if (isAIEnabled) {
+      result = await enhanceWithAI(
+        'doctor_assistant',
+        result,
+        `Enhance this evidence-based follow-up plan for ${patient.name || 'the patient'}. Diagnosis: ${diagnosis}. Treatment: ${treatment || 'N/A'}. Notes: ${notes || 'None'}.\n\nBase plan:\n${result.narrative}\n\nKeep structured sections and add patient-specific clinical nuance.`
+      );
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error('Clinical followup error:', err);
+    res.status(500).json({ error: 'Follow-up plan generation failed' });
   }
 });
 

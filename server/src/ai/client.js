@@ -95,24 +95,62 @@ function smartFallback(agentType, userMessage, context = {}) {
     const deptMap = {
       'chest': 'Cardiology',
       'heart': 'Cardiology',
+      'cardio': 'Cardiology',
+      'ecg': 'Cardiology',
+      'blood pressure': 'Cardiology',
       'breath': 'Pulmonology',
       'cough': 'Pulmonology',
       'lung': 'Pulmonology',
+      'asthma': 'Pulmonology',
       'headache': 'Neurology',
+      'migraine': 'Neurology',
+      'brain': 'Neurology',
+      'neuro': 'Neurology',
       'vision': 'Ophthalmology',
+      'eye': 'Ophthalmology',
+      'cataract': 'Ophthalmology',
       'stomach': 'Gastroenterology',
       'nausea': 'Gastroenterology',
+      'digestion': 'Gastroenterology',
+      'liver': 'Gastroenterology',
       'joint': 'Orthopedics',
       'back pain': 'Orthopedics',
+      'bone': 'Orthopedics',
+      'fracture': 'Orthopedics',
+      'ortho': 'Orthopedics',
       'skin': 'Dermatology',
       'rash': 'Dermatology',
+      'acne': 'Dermatology',
+      'derm': 'Dermatology',
+      'child': 'Pediatrics',
+      'baby': 'Pediatrics',
+      'pedia': 'Pediatrics',
+      'kidney': 'Nephrology',
+      'diabetes': 'Endocrinology',
+      'hormone': 'Endocrinology',
+      'thyroid': 'Endocrinology',
       'fever': 'General Medicine',
       'fatigue': 'General Medicine',
+      'flu': 'General Medicine',
+      'cold': 'General Medicine',
     };
     let dept = 'General Medicine';
     const symptomStr = symptoms.join(' ').toLowerCase();
-    for (const [key, val] of Object.entries(deptMap)) {
-      if (symptomStr.includes(key)) { dept = val; break; }
+    
+    // Check for exact specialty matches first
+    const specialties = [...new Set(Object.values(deptMap))];
+    for (const spec of specialties) {
+      if (symptomStr.includes(spec.toLowerCase())) {
+        dept = spec;
+        break;
+      }
+    }
+    
+    // If no exact specialty match, check keywords
+    if (dept === 'General Medicine') {
+      for (const [key, val] of Object.entries(deptMap)) {
+        if (symptomStr.includes(key)) { dept = val; break; }
+      }
     }
     const urgency = severity >= 7 ? 'monitor' : 'routine';
     return {

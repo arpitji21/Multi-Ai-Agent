@@ -26,11 +26,10 @@ function AiSpinner() {
 function SaveBanner({ message, type = 'success', pdfUrl }) {
   if (!message) return null;
   return (
-    <div className={`flex items-center justify-between gap-2 rounded-xl border px-4 py-3 text-sm ${
-      type === 'success'
+    <div className={`flex items-center justify-between gap-2 rounded-xl border px-4 py-3 text-sm ${type === 'success'
         ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
         : 'border-rose-500/30 bg-rose-500/10 text-rose-400'
-    }`}>
+      }`}>
       <div className="flex items-center gap-2">
         {type === 'success' ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
         {message}
@@ -79,7 +78,7 @@ function EMRGenerator({ patients, prefill }) {
 
       const data = res.data.emr || res.data;
       setAiOutput(JSON.stringify(data));
-      
+
       setDiagnosis(data.diagnosis || '');
       setTreatment(data.treatment_plan || '');
       setPrescription(data.prescription || '');
@@ -91,7 +90,7 @@ function EMRGenerator({ patients, prefill }) {
       } else {
         setFollowUp('');
       }
-    }catch {
+    } catch {
       setAiOutput('AI generation failed. Please fill in the fields manually.');
     } finally {
       setAiLoading(false);
@@ -110,28 +109,28 @@ function EMRGenerator({ patients, prefill }) {
         ? { bp: vitalBP, temp: vitalTemp, pulse: vitalPulse }
         : null;
 
-        console.log('Saving EMR:', {
-          patient_id: parseInt(patientId),
-          appointment_id: apptId ? parseInt(apptId) : null,
-          diagnosis,
-          treatment_plan: treatment,
-          prescription,
-          follow_up_date: followUp,
-        });
-        
-        const res = await api.post('/emr', {
-          patient_id: parseInt(patientId),
-          appointment_id: apptId ? parseInt(apptId) : null,
-          diagnosis,
-          treatment_plan: treatment,
-          prescription,
-          follow_up_date:
-            followUp && /^\d{4}-\d{2}-\d{2}$/.test(followUp)
-              ? followUp
-              : null,
-          notes,
-          vital_signs,
-        });
+      console.log('Saving EMR:', {
+        patient_id: parseInt(patientId),
+        appointment_id: apptId ? parseInt(apptId) : null,
+        diagnosis,
+        treatment_plan: treatment,
+        prescription,
+        follow_up_date: followUp,
+      });
+
+      const res = await api.post('/emr', {
+        patient_id: parseInt(patientId),
+        appointment_id: apptId ? parseInt(apptId) : null,
+        diagnosis,
+        treatment_plan: treatment,
+        prescription,
+        follow_up_date:
+          followUp && /^\d{4}-\d{2}-\d{2}$/.test(followUp)
+            ? followUp
+            : null,
+        notes,
+        vital_signs,
+      });
 
       const emrId = res.data.id;
       let pdfUrl = null;
@@ -239,7 +238,7 @@ function EMRGenerator({ patients, prefill }) {
             <textarea value={prescription} onChange={e => setPrescription(e.target.value)} rows={3} className="input resize-none" placeholder="Medications, dosages, frequency…" />
           </div>
           <div>
-          <label className="field-label">Follow-up Date</label>
+            <label className="field-label">Follow-up Date</label>
             <input
               type="date"
               value={followUp}
@@ -379,6 +378,132 @@ Make it clinically appropriate but note this is a draft for doctor review.`,
 }
 
 /* ─────────────────────────────────────── CLINICAL REPORT SUMMARIZER ── */
+function LabValuesTable({ labValues }) {
+  if (!labValues?.length) return null;
+  return (
+    <div className="overflow-x-auto rounded-xl border border-white/[0.07]">
+      <table className="w-full text-left text-xs">
+        <thead className="bg-white/[0.03] text-zinc-500">
+          <tr>
+            <th className="px-3 py-2">Marker</th>
+            <th className="px-3 py-2">Value</th>
+            <th className="px-3 py-2">Reference</th>
+            <th className="px-3 py-2">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-white/5">
+          {labValues.map((lv, i) => (
+            <tr key={i} className={lv.is_critical ? 'bg-rose-500/10' : lv.status !== 'normal' ? 'bg-amber-500/5' : ''}>
+              <td className="px-3 py-2 font-medium text-zinc-200">{lv.marker}</td>
+              <td className="px-3 py-2 text-zinc-300">{lv.value} {lv.unit}</td>
+              <td className="px-3 py-2 text-zinc-500">{lv.reference_range}</td>
+              <td className={`px-3 py-2 capitalize ${lv.is_critical ? 'text-rose-400 font-semibold' : lv.status !== 'normal' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                {lv.is_critical ? 'critical' : lv.status}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function StructuredClinicalResult({ data, accent = 'amber' }) {
+  if (!data) return null;
+  const accentMap = {
+    amber: { border: 'border-amber-500/20', bg: 'bg-amber-500/[0.04]', title: 'text-amber-300' },
+    violet: { border: 'border-violet-500/20', bg: 'bg-violet-500/[0.04]', title: 'text-violet-300' },
+  };
+  const s = accentMap[accent] || accentMap.amber;
+
+  return (
+    <div className={`space-y-4 rounded-2xl border p-5 ${s.border} ${s.bg}`}>
+      {data.engine && (
+        <p className="text-[10px] uppercase tracking-wider text-zinc-500">
+          Engine: {data.engine}{data.ai_enhanced ? ' + AI refinement' : ''}
+        </p>
+      )}
+
+      {data.lab_values?.length > 0 && (
+        <div>
+          <p className={`mb-2 text-sm font-semibold ${s.title}`}>Parsed Lab Values</p>
+          <LabValuesTable labValues={data.lab_values} />
+        </div>
+      )}
+
+      {data.key_findings?.length > 0 && (
+        <div>
+          <p className={`mb-2 text-sm font-semibold ${s.title}`}>Key Findings</p>
+          <ul className="space-y-1 text-sm text-zinc-300">
+            {data.key_findings.map((f, i) => <li key={i}>• {f}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {data.abnormal_values?.length > 0 && (
+        <div>
+          <p className="mb-2 text-sm font-semibold text-rose-300">Abnormal Values</p>
+          <ul className="space-y-1 text-sm text-rose-200/90">
+            {data.abnormal_values.map((a, i) => <li key={i}>• {a}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {data.clinical_impression && (
+        <div>
+          <p className={`mb-1 text-sm font-semibold ${s.title}`}>Clinical Impression</p>
+          <p className="text-sm text-zinc-300">{data.clinical_impression}</p>
+        </div>
+      )}
+
+      {data.recommended_actions?.length > 0 && (
+        <div>
+          <p className={`mb-2 text-sm font-semibold ${s.title}`}>Recommended Actions</p>
+          <ul className="space-y-1 text-sm text-zinc-300">
+            {data.recommended_actions.map((a, i) => <li key={i}>• {a}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {data.required_tests?.length > 0 && (
+        <div>
+          <p className={`mb-2 text-sm font-semibold ${s.title}`}>Required Tests</p>
+          <ul className="space-y-1 text-sm text-zinc-300">
+            {data.required_tests.map((t, i) => <li key={i}>• {t}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {data.monitoring_plan && (
+        <div>
+          <p className={`mb-1 text-sm font-semibold ${s.title}`}>Monitoring Plan</p>
+          <p className="text-sm text-zinc-300">{data.monitoring_plan}</p>
+        </div>
+      )}
+
+      {data.lifestyle_recommendations && (
+        <div>
+          <p className={`mb-1 text-sm font-semibold ${s.title}`}>Lifestyle Recommendations</p>
+          <p className="text-sm text-zinc-300">{data.lifestyle_recommendations}</p>
+        </div>
+      )}
+
+      {data.emergency_warning_signs && (
+        <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2">
+          <p className="mb-1 text-xs font-semibold text-rose-300">Emergency Warning Signs</p>
+          <p className="text-sm text-rose-200/90">{data.emergency_warning_signs}</p>
+        </div>
+      )}
+
+      {data.narrative && (
+        <div className="rounded-xl border border-white/[0.07] bg-black/20 p-4">
+          <p className="text-sm leading-relaxed text-zinc-300 whitespace-pre-line">{data.narrative}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReportSummarizer() {
   const [mode, setMode] = useState('paste');
   const [reportText, setReportText] = useState('');
@@ -404,57 +529,57 @@ function ReportSummarizer() {
       reader.onload = ev => setFileContent(ev.target.result || '');
       reader.onerror = () => setFileError('Could not read file. Try pasting the text instead.');
       reader.readAsText(selected);
+    } else if (selected.name.endsWith('.pdf')) {
+      setFileError('');
     } else {
-      setFileError('PDF and image files cannot be read client-side. Please copy and paste the report text into the text area, or export the report as .txt.');
+      setFileError('Supported formats: .txt, .csv, .pdf');
     }
   }
 
   async function summarize() {
-    const text = (mode === 'paste' ? reportText : fileContent).trim();
-    if (!text) return;
     setAiLoading(true);
     setSummary(null);
     try {
-      const res = await api.post('/ai/chat', {
-        message: `You are a clinical report analyst. Summarize the following medical report concisely for a doctor's quick review.
-
-Provide:
-1. KEY FINDINGS: Most important diagnostic findings
-2. ABNORMAL VALUES: Any values outside normal range (flag as ⚠ CRITICAL if severe)
-3. CLINICAL IMPRESSION: Brief interpretive summary
-4. RECOMMENDED ACTIONS: Suggested next steps or referrals
-
-Medical Report:
-${text}`,
-        context: { type: 'report_summary' },
-      });
-      setSummary(res.data.reply);
+      let res;
+      if (mode === 'upload' && file?.name.endsWith('.pdf')) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('report_type', 'general');
+        res = await api.post('/ai/clinical/summarize-report', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+      } else {
+        const text = (mode === 'paste' ? reportText : fileContent).trim();
+        if (!text) return;
+        res = await api.post('/ai/clinical/summarize-report', { text, report_type: 'general' });
+      }
+      setSummary(res.data);
     } catch {
-      setSummary('Unable to process report summary. Please try again.');
+      setSummary({ success: false, narrative: 'Unable to process report summary. Please try again.' });
     } finally {
       setAiLoading(false);
     }
   }
 
-  const hasCritical = summary?.toLowerCase().includes('critical') || summary?.includes('⚠');
-  const canSubmit = mode === 'paste' ? !!reportText.trim() : !!fileContent.trim();
+  const hasCritical = summary?.is_critical || summary?.abnormal_values?.some(a => /critical/i.test(a));
+  const canSubmit = mode === 'paste'
+    ? !!reportText.trim()
+    : file?.name?.endsWith('.pdf') ? !!file : !!fileContent.trim();
 
   return (
     <div className="space-y-5">
-      {/* Mode toggle */}
       <div className="flex gap-2">
         {[
           { id: 'paste', label: 'Paste Text' },
-          { id: 'upload', label: 'Upload .txt File' },
+          { id: 'upload', label: 'Upload File' },
         ].map(m => (
           <button
             key={m.id}
             onClick={() => { setMode(m.id); setFile(null); setFileContent(''); setFileError(''); }}
-            className={`rounded-xl border px-4 py-2 text-sm font-medium transition ${
-              mode === m.id
+            className={`rounded-xl border px-4 py-2 text-sm font-medium transition ${mode === m.id
                 ? 'border-brand-500/50 bg-brand-500/15 text-brand-300'
                 : 'border-white/10 bg-white/5 text-zinc-400 hover:text-zinc-200'
-            }`}
+              }`}
           >
             {m.label}
           </button>
@@ -474,15 +599,15 @@ ${text}`,
         </div>
       ) : (
         <div>
-          <label className="field-label">Upload Report (.txt, .csv)</label>
+          <label className="field-label">Upload Report (.txt, .csv, .pdf)</label>
           <label className="mt-1.5 flex cursor-pointer flex-col items-center gap-3 rounded-xl border-2 border-dashed border-white/15 bg-white/[0.02] px-6 py-10 transition hover:border-white/30 hover:bg-white/[0.04]">
             <Upload className="h-8 w-8 text-zinc-600" />
             <div className="text-center">
               <p className="text-sm font-medium text-zinc-300">Click to upload or drag & drop</p>
-              <p className="mt-1 text-xs text-zinc-600">Plain text files (.txt, .csv) — for PDF/image reports, use Paste Text</p>
+              <p className="mt-1 text-xs text-zinc-600">PDF parsed server-side with Python (pdfplumber)</p>
             </div>
             {file && !fileError && <p className="text-xs text-brand-400">✓ {file.name} — ready to analyze</p>}
-            <input type="file" className="hidden" accept=".txt,.csv,text/*" onChange={handleFileChange} />
+            <input type="file" className="hidden" accept=".txt,.csv,.pdf,text/*,application/pdf" onChange={handleFileChange} />
           </label>
           {fileError && (
             <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
@@ -508,24 +633,15 @@ ${text}`,
         disabled={aiLoading || !canSubmit}
         className="btn-primary w-full"
       >
-        {aiLoading ? <AiSpinner /> : <><FileText className="h-4 w-4" /> Summarize Report</>}
+        {aiLoading ? <AiSpinner /> : <><FileText className="h-4 w-4" /> Summarize Report (Python + AI)</>}
       </button>
 
       {summary && (
-        <div className={`space-y-3 rounded-2xl border p-5 ${
-          hasCritical
-            ? 'border-rose-500/30 bg-rose-500/[0.04]'
-            : 'border-amber-500/20 bg-amber-500/[0.04]'
-        }`}>
-          <div className="flex items-center gap-2">
-            <FileText className={`h-4 w-4 ${hasCritical ? 'text-rose-400' : 'text-amber-400'}`} />
-            <p className={`text-sm font-semibold ${hasCritical ? 'text-rose-300' : 'text-amber-300'}`}>
-              Clinical Summary {hasCritical && '— ⚠ Critical Values Detected'}
-            </p>
-          </div>
-          <div className="rounded-xl border border-white/[0.07] bg-black/20 p-4">
-            <p className="text-sm leading-relaxed text-zinc-300 whitespace-pre-line">{summary}</p>
-          </div>
+        <div className={`space-y-3 ${hasCritical ? 'rounded-2xl border border-rose-500/30 p-1' : ''}`}>
+          {hasCritical && (
+            <p className="px-4 pt-3 text-sm font-semibold text-rose-300">⚠ Critical Values Detected</p>
+          )}
+          <StructuredClinicalResult data={summary} accent="amber" />
         </div>
       )}
     </div>
@@ -541,6 +657,7 @@ function FollowUpRecommender({ patients, prefill }) {
   const [notes, setNotes] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [recommendation, setRecommendation] = useState(null);
+  const [planData, setPlanData] = useState(null);
   const [suggestedDate, setSuggestedDate] = useState('');
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(null);
@@ -553,36 +670,32 @@ function FollowUpRecommender({ patients, prefill }) {
     if (!diagnosis.trim()) return;
     setAiLoading(true);
     setRecommendation(null);
+    setPlanData(null);
     try {
-      const res = await api.post('/ai/chat', {
-        message: `You are a clinical follow-up advisor. Based on this patient's visit, recommend a follow-up plan.
-
-Patient: ${patientName || 'Patient'}
-Diagnosis: ${diagnosis}
-Treatment Given: ${treatment || 'Not specified'}
-Doctor Notes: ${notes || 'None'}
-
-Provide a structured follow-up plan with:
-1. RECOMMENDED FOLLOW-UP DATE: (specific timeframe, e.g. "2 weeks", "1 month", "3 months")
-2. REQUIRED TESTS: (specific lab tests, imaging, or monitoring to order at follow-up)
-3. MONITORING PLAN: (what to watch for, warning signs, home monitoring instructions)
-4. LIFESTYLE RECOMMENDATIONS: (diet, activity, lifestyle adjustments)
-5. EMERGENCY WARNING SIGNS: (symptoms that require immediate attention before follow-up)`,
-        context: { type: 'followup_recommendation', patient_id: patientId },
+      const res = await api.post('/ai/clinical/followup-plan', {
+        patient_id: patientId ? parseInt(patientId) : null,
+        diagnosis,
+        treatment,
+        notes,
       });
 
-      setRecommendation(res.data.reply);
+      const data = res.data;
+      setPlanData(data);
+      setRecommendation(data.narrative || '');
 
-      // Try to extract a suggested date
-      const dateMatch = res.data.reply.match(/(\d+)\s*(week|month|day)/i);
-      if (dateMatch) {
-        const num = parseInt(dateMatch[1]);
-        const unit = dateMatch[2].toLowerCase();
-        const d = new Date();
-        if (unit.startsWith('day')) d.setDate(d.getDate() + num);
-        else if (unit.startsWith('week')) d.setDate(d.getDate() + num * 7);
-        else if (unit.startsWith('month')) d.setMonth(d.getMonth() + num);
-        setSuggestedDate(d.toISOString().split('T')[0]);
+      if (data.follow_up_date) {
+        setSuggestedDate(data.follow_up_date);
+      } else {
+        const dateMatch = data.narrative?.match(/(\d+)\s*(week|month|day)/i);
+        if (dateMatch) {
+          const num = parseInt(dateMatch[1]);
+          const unit = dateMatch[2].toLowerCase();
+          const d = new Date();
+          if (unit.startsWith('day')) d.setDate(d.getDate() + num);
+          else if (unit.startsWith('week')) d.setDate(d.getDate() + num * 7);
+          else if (unit.startsWith('month')) d.setMonth(d.getMonth() + num);
+          setSuggestedDate(d.toISOString().split('T')[0]);
+        }
       }
     } catch {
       setRecommendation('Unable to generate follow-up plan. Please schedule manually.');
@@ -614,7 +727,7 @@ Provide a structured follow-up plan with:
         treatment_plan: treatment,
         follow_up_date: suggestedDate,
         notes: `AI Follow-up Recommendation:\n${recommendation}`,
-      }).catch(() => {});
+      }).catch(() => { });
 
       setBanner({ msg: `Follow-up appointment booked for ${suggestedDate} and saved to EMR!`, type: 'success' });
     } catch (err) {
@@ -660,17 +773,18 @@ Provide a structured follow-up plan with:
       </div>
 
       <button onClick={getRecommendation} disabled={aiLoading || !diagnosis.trim()} className="btn-primary w-full">
-        {aiLoading ? <AiSpinner /> : <><RefreshCw className="h-4 w-4" /> Generate Follow-up Plan</>}
+        {aiLoading ? <AiSpinner /> : <><RefreshCw className="h-4 w-4" /> Generate Follow-up Plan (Python + AI)</>}
       </button>
 
       {recommendation && (
-        <div className="space-y-4 rounded-2xl border border-violet-500/20 bg-violet-500/[0.04] p-5">
-          <p className="flex items-center gap-2 text-sm font-semibold text-violet-300">
-            <RefreshCw className="h-4 w-4" /> AI Follow-up Recommendation
-          </p>
-          <div className="rounded-xl border border-white/[0.07] bg-black/20 p-4">
-            <p className="text-sm leading-relaxed text-zinc-300 whitespace-pre-line">{recommendation}</p>
-          </div>
+        <div className="space-y-4">
+          {planData?.condition_matched && planData.condition_matched !== 'default' && (
+            <p className="text-xs text-zinc-500">
+              Matched guideline: <span className="text-violet-400 capitalize">{planData.condition_matched}</span>
+              {planData.interval_days ? ` · ${planData.interval_days} day interval` : ''}
+            </p>
+          )}
+          <StructuredClinicalResult data={planData || { narrative: recommendation }} accent="violet" />
 
           {/* Confirm follow-up */}
           <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
@@ -738,11 +852,10 @@ export default function DoctorAITools() {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition ${
-              activeTab === tab.id
+            className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition ${activeTab === tab.id
                 ? 'bg-white/15 text-white shadow-inner'
                 : 'text-zinc-500 hover:text-zinc-300'
-            }`}
+              }`}
           >
             <tab.icon className={`h-4 w-4 ${activeTab === tab.id ? tab.color : ''}`} />
             {tab.label}

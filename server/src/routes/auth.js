@@ -9,7 +9,7 @@ const router = express.Router();
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password, role = 'patient', phone, date_of_birth, gender, blood_group, address } = req.body;
+    const { name, email, password, role = 'patient', phone, date_of_birth, gender, blood_group, address, emergency_contact, allergies } = req.body;
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'name, email and password are required' });
     }
@@ -29,9 +29,10 @@ router.post('/register', async (req, res) => {
     );
     const user = userResult.rows[0];
     await query(
-      `INSERT INTO patients (user_id, date_of_birth, gender, blood_group, address)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [user.id, date_of_birth || null, gender || null, blood_group || null, address || null]
+      `INSERT INTO patients (user_id, date_of_birth, gender, blood_group, address, emergency_contact, allergies)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [user.id, date_of_birth || null, gender || null, blood_group || null,
+       address || null, emergency_contact || null, allergies || null]
     );
 
     const token = signToken({ id: user.id, email: user.email, role: user.role, name: user.name });

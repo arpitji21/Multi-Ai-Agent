@@ -287,7 +287,7 @@ async function extractTextFromReport(report) {
   ) {
     try {
       const { recognize } = require('tesseract.js');
-      const result = await recognize(filePath, 'eng', { logger: () => {} });
+      const result = await recognize(filePath, 'eng', { logger: () => { } });
       return (result.data.text || '').trim().slice(0, 4000);
     } catch (e) {
       console.error('OCR error:', e.message);
@@ -383,7 +383,7 @@ function analyzeTextLocally(text, reportType) {
     const found = m.keys.some(k => lowerText.includes(k));
     if (found) {
       findings.push(`${m.name} detected`);
-      
+
       // Basic value extraction logic (simplified regex)
       const regex = new RegExp(`(?:${m.keys.join('|')})\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)`, 'i');
       const match = text.match(regex);

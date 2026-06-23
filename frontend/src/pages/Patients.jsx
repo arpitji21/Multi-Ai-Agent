@@ -175,7 +175,16 @@ export default function Patients() {
               onChange={e => setNewPatient({...newPatient, allergies: e.target.value})}
             />
           </div>
-          <div className="md:col-span-3">
+          <div>
+            <label className="field-label">Emergency Contact</label>
+            <input 
+              placeholder="Name & phone number" 
+              className="input mt-1.5" 
+              value={newPatient.emergency_contact} 
+              onChange={e => setNewPatient({...newPatient, emergency_contact: e.target.value})}
+            />
+          </div>
+          <div className="md:col-span-2">
             <label className="field-label">Address</label>
             <textarea 
               placeholder="Current residential address" 

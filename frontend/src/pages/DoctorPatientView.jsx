@@ -3,7 +3,7 @@ import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, User, Heart, Pill, FileText, Brain, Calendar,
   ClipboardList, AlertCircle, Activity, Stethoscope, Clock,
-  ChevronRight, RefreshCw
+  ChevronRight, RefreshCw, Award, X, Check
 } from 'lucide-react';
 import api from '../lib/api';
 import { PageLoading } from '../components/Loader';
@@ -42,6 +42,17 @@ export default function DoctorPatientView() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('overview');
 
+  // Certificate State
+  const [showCertModal, setShowCertModal] = useState(false);
+  const [certForm, setCertForm] = useState({
+    cert_type: 'Medical Certificate',
+    start_date: new Date().toISOString().split('T')[0],
+    end_date: new Date(Date.now() + 3*24*60*60*1000).toISOString().split('T')[0],
+    fitness_date: new Date(Date.now() + 4*24*60*60*1000).toISOString().split('T')[0],
+    reason: 'medical reasons',
+  });
+  const [certLoading, setCertLoading] = useState(false);
+
   useEffect(() => {
     load();
   }, [patientId]);
@@ -70,6 +81,25 @@ export default function DoctorPatientView() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function generateCert() {
+    setCertLoading(true);
+    try {
+      const res = await api.post('/reports/certificate', {
+        patient_id: patientId,
+        ...certForm
+      });
+      if (res.data.pdf_url) {
+        const url = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}${res.data.pdf_url}`;
+        window.open(url, '_blank');
+        setShowCertModal(false);
+      }
+    } catch (err) {
+      alert('Failed to generate certificate');
+    } finally {
+      setCertLoading(false);
     }
   }
 
@@ -287,7 +317,7 @@ export default function DoctorPatientView() {
           {tab === 'emr' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <p className="text-sm text-zinc-500">{emrs.length} EMR record{emrs.length !== 1 ? 's' : ''} created by you</p>
+                <p className="text-sm text-zinc-500">{emrs.length} clinical record{emrs.length !== 1 ? 's' : ''} for this patient</p>
                 <button
                   onClick={() => navigate(`/doctor/ai-tools?tab=emr&patient=${patientId}&pname=${encodeURIComponent(patient.name)}`)}
                   className="btn-primary btn-sm"
@@ -420,6 +450,12 @@ export default function DoctorPatientView() {
           <ClipboardList className="h-4 w-4" /> Create EMR
         </button>
         <button
+          onClick={() => setShowCertModal(true)}
+          className="btn-ghost text-brand-400 border-brand-500/30 hover:bg-brand-500/10"
+        >
+          <Award className="h-4 w-4" /> Medical Certificate
+        </button>
+        <button
           onClick={() => navigate(`/doctor/ai-tools?tab=prescription&patient=${patientId}&pname=${encodeURIComponent(patient.name)}`)}
           className="btn-ghost"
         >
@@ -432,6 +468,77 @@ export default function DoctorPatientView() {
           <RefreshCw className="h-4 w-4" /> Follow-up Advisor
         </button>
       </div>
+
+      {/* Certificate Modal */}
+      {showCertModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md animate-in zoom-in-95 glass-card p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <Award className="text-brand-400" size={20} /> Generate Certificate
+              </h3>
+              <button onClick={() => setShowCertModal(false)} className="text-zinc-500 hover:text-white transition">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="field-label">Certificate Type</label>
+                <select 
+                  className="input"
+                  value={certForm.cert_type}
+                  onChange={e => setCertForm({...certForm, cert_type: e.target.value})}
+                >
+                  <option value="Medical Certificate">Medical Certificate (General)</option>
+                  <option value="Sick Note">Sick Note (Leave)</option>
+                  <option value="Fitness Certificate">Fitness Certificate</option>
+                </select>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="field-label">Start Date</label>
+                  <input type="date" className="input" value={certForm.start_date} onChange={e => setCertForm({...certForm, start_date: e.target.value})} />
+                </div>
+                <div>
+                  <label className="field-label">End Date</label>
+                  <input type="date" className="input" value={certForm.end_date} onChange={e => setCertForm({...certForm, end_date: e.target.value})} />
+                </div>
+              </div>
+
+              <div>
+                <label className="field-label">Fitness Date</label>
+                <input type="date" className="input" value={certForm.fitness_date} onChange={e => setCertForm({...certForm, fitness_date: e.target.value})} />
+              </div>
+
+              <div>
+                <label className="field-label">Reason / Condition</label>
+                <input 
+                  className="input" 
+                  placeholder="e.g. viral fever, recovery from surgery..." 
+                  value={certForm.reason}
+                  onChange={e => setCertForm({...certForm, reason: e.target.value})}
+                />
+              </div>
+
+              <div className="pt-4 flex gap-3">
+                <button onClick={() => setShowCertModal(false)} className="btn-ghost flex-1">Cancel</button>
+                <button 
+                  onClick={generateCert} 
+                  disabled={certLoading}
+                  className="btn-primary flex-1"
+                >
+                  {certLoading ? 'Generating...' : <><Check size={16} /> Generate PDF</>}
+                </button>
+              </div>
+              <p className="text-[10px] text-zinc-500 text-center">
+                Uses local PDF engine. No API credits required.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

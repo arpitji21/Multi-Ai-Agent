@@ -109,7 +109,7 @@ router.post('/upload', authenticate, upload.single('file'), async (req, res) => 
       `INSERT INTO reports (patient_id, file_name, file_path, file_type, report_type, notes, file_size)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [patient_id, req.file.originalname, req.file.filename, req.file.mimetype,
-       report_type || 'general', notes || '', req.file.size]
+        report_type || 'general', notes || '', req.file.size]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -183,25 +183,90 @@ router.put('/:id', authenticate, requireRole('admin', 'doctor'), async (req, res
   }
 });
 
+const { spawn } = require('child_process');
+
 // DELETE /api/reports/:id — admin or own patient
 router.delete('/:id', authenticate, async (req, res) => {
   try {
-    if (req.user.role === 'doctor') return res.status(403).json({ error: 'Forbidden' });
-    const check = await query(`SELECT r.id, p.user_id FROM reports r JOIN patients p ON r.patient_id=p.id WHERE r.id=$1`, [req.params.id]);
-    if (check.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
-    if (req.user.role === 'patient' && check.rows[0].user_id !== req.user.id) {
-      return res.status(403).json({ error: 'Forbidden' });
+    const reportRes = await query(`SELECT patient_id FROM reports WHERE id=$1`, [req.params.id]);
+    if (reportRes.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
+
+    // Auth check: Admin or the patient themselves
+    if (req.user.role !== 'admin') {
+      const pat = await query(`SELECT id FROM patients WHERE user_id=$1`, [req.user.id]);
+      if (pat.rows.length === 0 || pat.rows[0].id !== reportRes.rows[0].patient_id) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
     }
-    // Delete associated file from disk
-    const fileCheck = await query(`SELECT file_path FROM reports WHERE id=$1`, [req.params.id]);
-    if (fileCheck.rows.length > 0) {
-      const filePath = path.join(uploadDir, fileCheck.rows[0].file_path);
-      fs.unlink(filePath, () => {});
-    }
+
     await query(`DELETE FROM reports WHERE id=$1`, [req.params.id]);
     res.json({ message: 'Report deleted' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete report' });
+  }
+});
+
+/* ── POST /api/reports/certificate — Generate professional medical certificate (Local Python) ── */
+router.post('/certificate', authenticate, requireRole('doctor', 'admin'), async (req, res) => {
+  try {
+    const { patient_id, cert_type, start_date, end_date, reason, fitness_date, custom_body } = req.body;
+
+    if (!patient_id) return res.status(400).json({ error: 'patient_id is required' });
+
+    // Fetch patient and doctor info for the certificate
+    const info = await query(`
+      SELECT p.id, u.name as patient_name, d.id as doctor_id, du.name as doctor_name
+      FROM patients p
+      JOIN users u ON p.user_id = u.id
+      LEFT JOIN appointments a ON a.patient_id = p.id
+      LEFT JOIN doctors d ON d.id = a.doctor_id
+      LEFT JOIN users du ON d.user_id = du.id
+      WHERE p.id = $1
+      ORDER BY a.created_at DESC LIMIT 1
+    `, [patient_id]);
+
+    if (info.rows.length === 0) return res.status(404).json({ error: 'Patient not found' });
+
+    const data = {
+      ...info.rows[0],
+      cert_type: cert_type || 'Medical Certificate',
+      start_date,
+      end_date,
+      reason,
+      fitness_date,
+      custom_body,
+      verify_id: `MEDIAI-${Date.now()}`
+    };
+
+    const fileName = `cert_${patient_id}_${Date.now()}.pdf`;
+    const outputPath = path.join(__dirname, '../../uploads/certificates', fileName);
+
+    if (!fs.existsSync(path.dirname(outputPath))) fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+    const pythonProcess = spawn('python', [
+      path.join(__dirname, '../utils/generate_certificate.py'),
+      JSON.stringify(data),
+      outputPath
+    ]);
+
+    pythonProcess.stdout.on('data', (data) => {
+      const output = data.toString();
+      if (output.startsWith('SUCCESS:')) {
+        const publicUrl = `/uploads/certificates/${fileName}`;
+        res.json({ message: 'Certificate generated successfully', pdf_url: publicUrl });
+      } else if (output.startsWith('ERROR:')) {
+        console.error('Python PDF Error:', output);
+        res.status(500).json({ error: 'Failed to generate certificate PDF' });
+      }
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      console.error(`stderr: ${data}`);
+    });
+
+  } catch (err) {
+    console.error('Certificate generation error:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -152,15 +152,14 @@ router.get('/patient/:patient_id', authenticate, async (req, res) => {
       const ownPatId = await getOwnPatientId(req.user.id);
       if (ownPatId !== requestedPatId) return res.status(403).json({ error: 'Forbidden' });
     } else if (req.user.role === 'doctor') {
-      // Doctor may only see EMRs they created for this patient
-      const docId = await getOwnDoctorId(req.user.id);
+      // Doctor can see all EMRs for this patient to ensure continuity of care
       const result = await query(
         `SELECT e.*, du.name as doctor_name, d.specialization
          FROM emr_records e
          JOIN doctors d ON e.doctor_id = d.id
          JOIN users du ON d.user_id = du.id
-         WHERE e.patient_id=$1 AND e.doctor_id=$2 ORDER BY e.created_at DESC`,
-        [requestedPatId, docId]
+         WHERE e.patient_id=$1 ORDER BY e.created_at DESC`,
+        [requestedPatId]
       );
       return res.json(result.rows);
     }
