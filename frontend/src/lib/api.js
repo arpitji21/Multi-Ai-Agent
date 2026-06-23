@@ -53,7 +53,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'https://multi-ai-agent-xdi9.onrender.com',
+  baseURL: 'https://multi-ai-agent-xdi9.onrender.com/api',
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
