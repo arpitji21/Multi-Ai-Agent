@@ -258,8 +258,37 @@ function ClinicalRecordsTab() {
                 </div>
                 <button
                   onClick={async () => {
-                    const res = await api.get(`/emr/${e.id}/pdf`);
-                    if (res.data.pdf_url) window.open(res.data.pdf_url, '_blank');
+                    try {
+                      const response = await api.get(
+                        `/emr/${e.id}/pdf`,
+                        {
+                          responseType: 'blob'
+                        }
+                      );
+
+                      const blob = new Blob(
+                        [response.data],
+                        { type: 'application/pdf' }
+                      );
+
+                      const url = window.URL.createObjectURL(blob);
+
+                      const link = document.createElement('a');
+
+                      link.href = url;
+                      link.download = `EMR-${e.id}.pdf`;
+
+                      document.body.appendChild(link);
+
+                      link.click();
+
+                      link.remove();
+
+                      window.URL.revokeObjectURL(url);
+
+                    } catch (err) {
+                      console.error('PDF download failed', err);
+                    }
                   }}
                   className="btn-primary btn-sm px-3"
                 >

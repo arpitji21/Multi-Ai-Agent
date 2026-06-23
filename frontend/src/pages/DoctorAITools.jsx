@@ -136,7 +136,11 @@ function EMRGenerator({ patients, prefill }) {
       let pdfUrl = null;
       try {
         const pdfRes = await api.get(`/emr/${emrId}/pdf`);
-        pdfUrl = pdfRes.data.pdf_url;
+        if (pdfRes.data.pdf_url) {
+          // Resolve relative path against the backend origin
+          const backendBase = api.defaults.baseURL.replace(/\/api$/, '');
+          pdfUrl = `${backendBase}${pdfRes.data.pdf_url}`;
+        }
       } catch (e) { console.error('PDF fetch error', e); }
 
       setBanner({ msg: 'EMR saved successfully!', type: 'success', pdfUrl });

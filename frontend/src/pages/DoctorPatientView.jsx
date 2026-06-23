@@ -64,14 +64,14 @@ export default function DoctorPatientView() {
         api.get(`/patients/${patientId}`),
         api.get(`/patients/${patientId}/medical-history`).catch(() => ({ data: [] })),
         api.get(`/patients/${patientId}/medicine-reminders`).catch(() => ({ data: [] })),
-        api.get('/emr').catch(() => ({ data: [] })),
+        api.get(`/emr/patient/${patientId}`).catch(() => ({ data: [] })),
         api.get('/appointments').catch(() => ({ data: [] })),
         api.get(`/reports?patient_id=${patientId}`).catch(() => ({ data: [] })),
       ]);
       setPatient(patRes.data);
       setHistory(histRes.data || []);
       setReminders(remRes.data || []);
-      setEmrs((emrRes.data || []).filter(e => e.patient_id === parseInt(patientId)));
+      setEmrs(emrRes.data || []);
       setReports(rptRes.data || []);
       if (apptId) {
         const found = (apptRes.data || []).find(a => a.id === parseInt(apptId));
@@ -342,7 +342,10 @@ export default function DoctorPatientView() {
                               try {
                                 const res = await api.get(`/emr/${e.id}/pdf`);
                                 if (res.data.pdf_url) {
-                                  window.open(res.data.pdf_url, '_blank');
+                                  // pdf_url is a relative path like /uploads/emr_reports/xxx.pdf
+                                  // We need to resolve it against the backend origin, not the frontend
+                                  const backendBase = api.defaults.baseURL.replace(/\/api$/, '');
+                                  window.open(`${backendBase}${res.data.pdf_url}`, '_blank');
                                 }
                               } catch (err) {
                                 alert('Failed to generate PDF. Please try again.');
