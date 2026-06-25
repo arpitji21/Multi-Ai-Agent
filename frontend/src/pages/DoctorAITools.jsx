@@ -64,6 +64,52 @@ function EMRGenerator({ patients, prefill }) {
   const [followUp, setFollowUp] = useState('');
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(null);
+  const [listening, setListening] = useState(false);
+
+
+  const startVoiceDictation = () => {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+  
+    if (!SpeechRecognition) {
+      alert("Speech Recognition is not supported in this browser.");
+      return;
+    }
+  
+    const recognition = new SpeechRecognition();
+  
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+  
+    recognition.onstart = () => {
+      setListening(true);
+    };
+  
+    recognition.onend = () => {
+      setListening(false);
+    };
+  
+    recognition.onerror = (event) => {
+      console.error("Speech error:", event.error);
+      setListening(false);
+    };
+  
+    recognition.onresult = (event) => {
+      const lastResult = event.results[event.results.length - 1];
+    
+      if (lastResult.isFinal) {
+        const transcript = lastResult[0].transcript.trim();
+    
+        setNotes((prev) =>
+          prev ? prev + "\n" + transcript : transcript
+        );
+      }
+    };
+  
+    recognition.start();
+  };
+
 
   async function generateEMR() {
     if (!notes.trim()) return;
@@ -201,9 +247,18 @@ function EMRGenerator({ patients, prefill }) {
       <div>
         <div className="flex items-center justify-between">
           <label className="field-label">Clinical Notes / Consultation Summary</label>
-          <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-500">
-            <Mic className="h-3 w-3" /> Voice dictation (coming soon)
-          </div>
+          <button
+            type="button"
+            onClick={startVoiceDictation}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs border ${
+              listening
+                ? "bg-red-500/20 border-red-500 text-red-300"
+                : "bg-white/5 border-white/10 text-zinc-400"
+            }`}
+          >
+            <Mic className="h-3 w-3" />
+            {listening ? "Listening..." : "Start Dictation"}
+          </button>
         </div>
         <textarea
           value={notes}
@@ -271,6 +326,7 @@ function PrescriptionDrafter({ patients, prefill }) {
   const [draft, setDraft] = useState('');
   const [banner, setBanner] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [listening, setListening] = useState(false);
 
   async function generatePrescription() {
     if (!complaint.trim()) return;
