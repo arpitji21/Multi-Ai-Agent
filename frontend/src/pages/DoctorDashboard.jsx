@@ -88,7 +88,7 @@ export default function DoctorDashboard() {
 
   const today = new Date().toISOString().split('T')[0];
   const todayAppts = appointments.filter(a => a.appointment_date?.startsWith(today));
-  const pendingQueue = appointments.filter(a => a.status === 'booked').slice(0, 5);
+  const pendingQueue = appointments.filter(a => ['booked', 'confirmed'].includes(a.status)).slice(0, 5);
   const completed = appointments.filter(a => a.status === 'completed');
   const revenueEst = completed.length * (profile?.consultation_fee || 0);
 
@@ -134,7 +134,7 @@ export default function DoctorDashboard() {
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard icon={Calendar} label="Today's Appointments" value={todayAppts.length} color="text-blue-400" sub="Scheduled today" />
-        <StatCard icon={AlertCircle} label="Patient Queue" value={pendingQueue.length} color="text-amber-400" sub="Awaiting confirmation" />
+        <StatCard icon={AlertCircle} label="Patient Queue" value={pendingQueue.length} color="text-amber-400" sub="Upcoming visits" />
         <StatCard icon={CheckCircle} label="Completed" value={completed.length} color="text-emerald-400" sub="All time" />
         <StatCard
           icon={DollarSign}
@@ -214,16 +214,7 @@ export default function DoctorDashboard() {
                     >
                       <Eye className="h-3.5 w-3.5" />
                     </button>
-                    {a.status === 'booked' && (
-                      <button
-                        onClick={() => updateStatus(a.id, 'confirmed')}
-                        disabled={statusUpdating === a.id}
-                        className="btn-success btn-sm"
-                      >
-                        {statusUpdating === a.id ? '…' : 'Confirm'}
-                      </button>
-                    )}
-                    {a.status === 'confirmed' && (
+                    {['booked', 'confirmed'].includes(a.status) && (
                       <button
                         onClick={() => navigate(`/doctor/ai-tools?tab=emr&appt=${a.id}&patient=${a.patient_id}&pname=${encodeURIComponent(a.patient_name || '')}`)}
                         className="btn-primary btn-sm"
@@ -249,7 +240,7 @@ export default function DoctorDashboard() {
               </h2>
               {pendingQueue.length > 0 && (
                 <span className="badge bg-amber-500/10 border-amber-500/30 text-amber-400">
-                  {pendingQueue.length} pending
+                  {pendingQueue.length} active
                 </span>
               )}
             </div>
@@ -279,13 +270,15 @@ export default function DoctorDashboard() {
                       >
                         <Eye className="h-3 w-3" />
                       </button>
-                      <button
-                        onClick={() => updateStatus(a.id, 'confirmed')}
-                        disabled={statusUpdating === a.id}
-                        className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-500/20"
-                      >
-                        {statusUpdating === a.id ? '…' : 'Confirm'}
-                      </button>
+                      {['booked', 'confirmed'].includes(a.status) && (
+                        <button
+                          onClick={() => updateStatus(a.id, 'completed')}
+                          disabled={statusUpdating === a.id}
+                          className="rounded-lg border border-zinc-500/30 bg-zinc-500/10 px-2.5 py-1 text-xs font-semibold text-zinc-300 transition hover:bg-zinc-500/20"
+                        >
+                          {statusUpdating === a.id ? '…' : 'Complete'}
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}

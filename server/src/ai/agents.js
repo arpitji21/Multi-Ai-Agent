@@ -115,12 +115,20 @@ async function runAppointmentScheduler(message, userId, history) {
         try {
           const patRes = await query(`SELECT id FROM patients WHERE user_id=$1`, [userId]);
           if (patRes.rows.length > 0) {
+            // Check conflict
+            const conflict = await query(
+              `SELECT id FROM appointments WHERE doctor_id=$1 AND appointment_date=$2 AND appointment_time=$3 AND status != 'cancelled'`,
+              [doctorId, aptDate, aptTime]
+            );
+            if (conflict.rows.length > 0) {
+              return { reply: 'Sorry, that slot is no longer available. Please select another slot.', agentType: 'appointment_scheduler' };
+            }
             await query(
               `INSERT INTO appointments (patient_id, doctor_id, appointment_date, appointment_time, reason, status)
-               VALUES ($1,$2,$3,$4,$5,'booked')`,
+               VALUES ($1,$2,$3,$4,$5,'confirmed')`,
               [patRes.rows[0].id, doctorId, aptDate, aptTime, message.slice(0, 200)]
             );
-            return { reply: typeof reply === 'string' ? reply + '\n\n✅ **Appointment successfully booked!** You will find it in your appointments list.' : 'Appointment booked successfully!', agentType: 'appointment_scheduler', booked: true };
+            return { reply: typeof reply === 'string' ? reply + '\n\n✅ **Appointment successfully booked and confirmed!** You will find it in your appointments list.' : 'Appointment booked and confirmed successfully!', agentType: 'appointment_scheduler', booked: true };
           }
         } catch (bookErr) {
           console.error('Booking error:', bookErr.message);

@@ -95,7 +95,7 @@ router.post('/followup', authenticate, requireRole('doctor'), async (req, res) =
 
     const result = await query(
       `INSERT INTO appointments (patient_id, doctor_id, appointment_date, appointment_time, reason, status)
-       VALUES ($1,$2,$3,$4,$5,'booked') RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,'confirmed') RETURNING *`,
       [patient_id, docId, appointment_date, appointment_time, reason || 'Follow-up consultation']
     );
 
@@ -137,7 +137,7 @@ router.post('/', authenticate, async (req, res) => {
 
     const result = await query(
       `INSERT INTO appointments (patient_id, doctor_id, appointment_date, appointment_time, reason, status)
-       VALUES ($1,$2,$3,$4,$5,'booked') RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,'confirmed') RETURNING *`,
       [patient_id, doctor_id, appointment_date, appointment_time, reason || '']
     );
 
@@ -236,13 +236,41 @@ router.put('/:id/reschedule', authenticate, async (req, res) => {
     if (!appointment_date || !appointment_time) {
       return res.status(400).json({ error: 'appointment_date and appointment_time are required' });
     }
+
+    // Retrieve doctor_id for this appointment to perform conflict check
+    const appt = await query(`SELECT doctor_id FROM appointments WHERE id=$1`, [req.params.id]);
+    if (appt.rows.length === 0) return res.status(404).json({ error: 'Appointment not found' });
+    const doctor_id = appt.rows[0].doctor_id;
+
+    // Check if doctor is free at the new slot (excluding current appointment)
+    const conflict = await query(
+      `SELECT id FROM appointments WHERE doctor_id=$1 AND appointment_date=$2 AND appointment_time=$3 AND status != 'cancelled' AND id != $4`,
+      [doctor_id, appointment_date, appointment_time, req.params.id]
+    );
+    if (conflict.rows.length > 0) return res.status(409).json({ error: 'This slot is already booked' });
+
     const result = await query(
-      `UPDATE appointments SET appointment_date=$1, appointment_time=$2, status='booked', updated_at=NOW()
+      `UPDATE appointments SET appointment_date=$1, appointment_time=$2, status='confirmed', updated_at=NOW()
        WHERE id=$3 RETURNING *`,
       [appointment_date, appointment_time, req.params.id]
     );
+
+    // Also send a notification to patient/user about confirmation
+    let patient_id = null;
+    const patQuery = await query(`SELECT patient_id FROM appointments WHERE id=$1`, [req.params.id]);
+    if (patQuery.rows.length > 0) {
+      patient_id = patQuery.rows[0].patient_id;
+      await query(
+        `INSERT INTO notifications (user_id, title, message, type)
+         SELECT u.id, 'Appointment Rescheduled', $1, 'appointment'
+         FROM patients p JOIN users u ON p.user_id=u.id WHERE p.id=$2`,
+        [`Your appointment has been rescheduled and confirmed for ${appointment_date} at ${appointment_time}`, patient_id]
+      ).catch(() => {});
+    }
+
     res.json(result.rows[0]);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to reschedule' });
   }
 });

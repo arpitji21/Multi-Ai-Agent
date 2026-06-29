@@ -579,26 +579,8 @@ export default function Appointments() {
                 </button>
               )}
 
-              {/* Doctor/admin actions: confirm + complete */}
-              {!isPatient && a.status === 'booked' && (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => updateStatus(a.id, 'confirmed')}
-                    disabled={updating === a.id}
-                    className="flex-1 rounded-xl border border-emerald-500/30 bg-emerald-500/10 py-1.5 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/20 transition"
-                  >
-                    Confirm
-                  </button>
-                  <button
-                    onClick={() => updateStatus(a.id, 'cancelled')}
-                    disabled={updating === a.id}
-                    className="flex-1 rounded-xl border border-rose-500/30 bg-rose-500/10 py-1.5 text-xs font-semibold text-rose-400 hover:bg-rose-500/20 transition"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
-              {!isPatient && a.status === 'confirmed' && (
+              {/* Doctor/admin actions: complete */}
+              {!isPatient && ['booked', 'confirmed'].includes(a.status) && (
                 <button
                   onClick={() => updateStatus(a.id, 'completed')}
                   disabled={updating === a.id}
